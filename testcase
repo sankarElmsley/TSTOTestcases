@@ -161,64 +161,102 @@ describe('CreditcardUtilityService', () => {
 
 
 
-@Component
+@Configuration
 @RequiredArgsConstructor
-@StepScope  // Important to maintain step scope
-public class MCRawRecordItemReader implements ItemReader<MCRawRecord>, ItemStream {
+@Slf4j
+public class BatchConfig {
 
     @Value("${mc.batch.step-chunk-size}")
     private int chunkSize;
 
-    @Value("#{jobParameters['fileKey']}")
-    private String fileKey;
+    private final MongoTemplate mongoTemplate;
 
-    private final MCRawRecordRepository mcRawRecordRepository;
-    private long totalRecordsRead;
-    private List<MCRawRecord> currentChunk;
-    private int currentIndexInChunk;
-    private ObjectId lastProcessedId = new ObjectId("000000000000000000000000");
-
-    @Override
-    public MCRawRecord read() {
-        try {
-            if (needsNewChunk()) {
-                currentChunk = fetchNextChunk();
-                currentIndexInChunk = 0;
+    @StepScope
+    @Bean
+    public MongoItemReader<MCRawRecord> mcRawRecordReader(
+            @Value("#{jobParameters['fileKey']}") String fileKey,
+            @Value("#{stepExecution}") StepExecution stepExecution) {
+        
+        log.info("Initializing MongoDB reader for fileKey: {}", fileKey);
+        
+        MongoItemReader<MCRawRecord> reader = new MongoItemReader<>() {
+            private boolean isFirstRead = true;
+            
+            @Override
+            protected Object doRead() throws Exception {
+                Object item = super.doRead();
                 
-                if (currentChunk.isEmpty()) {
+                // If we've read all items, set the stop flag
+                if (item == null && isFirstRead) {
                     log.info("No more records to process for fileKey: {}", fileKey);
-                    // Set completion flag in job context
-                    ExecutionContext executionContext = StepSynchronizationManager
-                            .getContext()
-                            .getStepExecution()
-                            .getJobExecution()
-                            .getExecutionContext();
-                    executionContext.putBoolean("stopFlag", true);
-                    return null;
+                    stepExecution.getJobExecution()
+                            .getExecutionContext()
+                            .put("stopFlag", true);
                 }
+                isFirstRead = false;
+                return item;
             }
-
-            MCRawRecord record = currentChunk.get(currentIndexInChunk++);
-            lastProcessedId = record.get_id();
-            totalRecordsRead++;
-            return record;
+        };
+        
+        try {
+            // Create Query object
+            Query query = new Query()
+                .addCriteria(Criteria.where("fileKey").is(fileKey))
+                .addCriteria(Criteria.where("status").is(RawRecordStatus.PENDING));
+                
+            reader.setTemplate(mongoTemplate);
+            reader.setTargetType(MCRawRecord.class);
+            reader.setQuery(query);
+            reader.setSort(Map.of("_id", Sort.Direction.ASC));
+            reader.setPageSize(chunkSize);
+            reader.setCollection("mcRawRecord");
+            reader.afterPropertiesSet();
+            
+            log.info("MongoDB reader initialized successfully with chunk size: {}", chunkSize);
             
         } catch (Exception e) {
-            log.error("Error reading records: {}", e.getMessage(), e);
-            throw new NonTransientResourceException("Failed to read records", e);
+            log.error("Failed to initialize MongoDB reader: {}", e.getMessage(), e);
+            throw new BeanCreationException("Failed to initialize MongoDB reader", e);
         }
+        
+        return reader;
     }
 
-    private boolean needsNewChunk() {
-        return currentChunk == null || currentIndexInChunk >= currentChunk.size();
+    @Bean
+    public Step processMCStep() {
+        return new StepBuilder("processMCStep", jobRepository)
+            .<MCRawRecord, MessageCentreClient>chunk(chunkSize, batchTemplateTransactionManager)
+            .reader(mcRawRecordReader(null, null)) // Parameters will be injected by Spring
+            .processor(mcRawRecordItemProcessor())
+            .writer(mcRawRecordItemWriter())
+            .faultTolerant()
+            .skip(TemplatedBatchException.class)
+            .skipLimit(10)
+            .listener(new StepExecutionListener() {
+                @Override
+                public ExitStatus afterStep(StepExecution stepExecution) {
+                    Boolean stopFlag = (Boolean) stepExecution.getJobExecution()
+                            .getExecutionContext()
+                            .get("stopFlag");
+                    
+                    if (stopFlag != null && stopFlag) {
+                        log.info("Processing completed for the job");
+                        return ExitStatus.COMPLETED;
+                    }
+                    return stepExecution.getExitStatus();
+                }
+            })
+            .build();
     }
 
-    private List<MCRawRecord> fetchNextChunk() {
-        return mcRawRecordRepository.findTopByFileKeyAndStatusAndIdGreaterThan(
-                fileKey, 
-                RawRecordStatus.PENDING,
-                lastProcessedId,
-                PageRequest.of(0, chunkSize, Sort.by(Sort.Direction.ASC, "id"))
-        );
+    @Bean("batchMCJob")
+    public Job batchMCJob() {
+        return new JobBuilder("batchMCJob", jobRepository)
+                .preventRestart() // Prevents the same job from being restarted
+                .start(initialMCStep())
+                .next(mcJobExecutionDecider).on("CONTINUE").to(processMCStep())
+                .from(mcJobExecutionDecider).on("STOPPED").end()
+                .end()
+                .build();
     }
 }
