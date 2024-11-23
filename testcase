@@ -159,3 +159,66 @@ describe('CreditcardUtilityService', () => {
     });
 });
 
+
+
+@Component
+@RequiredArgsConstructor
+@StepScope  // Important to maintain step scope
+public class MCRawRecordItemReader implements ItemReader<MCRawRecord>, ItemStream {
+
+    @Value("${mc.batch.step-chunk-size}")
+    private int chunkSize;
+
+    @Value("#{jobParameters['fileKey']}")
+    private String fileKey;
+
+    private final MCRawRecordRepository mcRawRecordRepository;
+    private long totalRecordsRead;
+    private List<MCRawRecord> currentChunk;
+    private int currentIndexInChunk;
+    private ObjectId lastProcessedId = new ObjectId("000000000000000000000000");
+
+    @Override
+    public MCRawRecord read() {
+        try {
+            if (needsNewChunk()) {
+                currentChunk = fetchNextChunk();
+                currentIndexInChunk = 0;
+                
+                if (currentChunk.isEmpty()) {
+                    log.info("No more records to process for fileKey: {}", fileKey);
+                    // Set completion flag in job context
+                    ExecutionContext executionContext = StepSynchronizationManager
+                            .getContext()
+                            .getStepExecution()
+                            .getJobExecution()
+                            .getExecutionContext();
+                    executionContext.putBoolean("stopFlag", true);
+                    return null;
+                }
+            }
+
+            MCRawRecord record = currentChunk.get(currentIndexInChunk++);
+            lastProcessedId = record.get_id();
+            totalRecordsRead++;
+            return record;
+            
+        } catch (Exception e) {
+            log.error("Error reading records: {}", e.getMessage(), e);
+            throw new NonTransientResourceException("Failed to read records", e);
+        }
+    }
+
+    private boolean needsNewChunk() {
+        return currentChunk == null || currentIndexInChunk >= currentChunk.size();
+    }
+
+    private List<MCRawRecord> fetchNextChunk() {
+        return mcRawRecordRepository.findTopByFileKeyAndStatusAndIdGreaterThan(
+                fileKey, 
+                RawRecordStatus.PENDING,
+                lastProcessedId,
+                PageRequest.of(0, chunkSize, Sort.by(Sort.Direction.ASC, "id"))
+        );
+    }
+}
