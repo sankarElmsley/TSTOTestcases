@@ -160,9 +160,38 @@ describe('CreditcardUtilityService', () => {
 });
 
 
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.springframework.data.mongodb.core.BulkOperations;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.index.Index;
+import org.springframework.data.mongodb.core.index.IndexOperations;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.test.util.ReflectionTestUtils;
+import com.mongodb.bulk.BulkWriteResult;
+import org.bson.types.ObjectId;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
-class MCRawRecordCustomRepositoryImplTest {
+class SFMCRawRecordCustomRepositoryImplTest {
 
     @Mock
     private MongoTemplate mongoTemplate;
@@ -171,48 +200,85 @@ class MCRawRecordCustomRepositoryImplTest {
     private BulkOperations bulkOperations;
 
     @Mock
+    private BulkWriteResult bulkWriteResult;
+
+    @Mock
     private IndexOperations indexOperations;
 
     @InjectMocks
-    private MCRawRecordCustomRepositoryImpl repository;
+    private SFMCRawRecordCustomRepositoryImpl repository;
+
+    @Captor
+    private ArgumentCaptor<Query> queryCaptor;
+
+    private final List<ObjectId> mockObjectIds = Arrays.asList(
+        new ObjectId("507f1f77bcf86d799439011"),
+        new ObjectId("507f1f77bcf86d799439012")
+    );
 
     @BeforeEach
     void setUp() {
-        // Set batch size
         ReflectionTestUtils.setField(repository, "deleteBatchSize", 100);
-
-        // Mock index operations - this is key to fix NPE
-        doReturn(indexOperations).when(mongoTemplate).indexOps(MCRawRecord.class);
-        doReturn("test_index").when(indexOperations).ensureIndex(any(Index.class));
-        
-        // Mock bulk operations
-        doReturn(bulkOperations).when(mongoTemplate)
-            .bulkOps(BulkOperations.BulkMode.UNORDERED, MCRawRecord.class);
-
-        // Mock execute result
-        doReturn(BulkWriteResult.acknowledged(0, 0, 0, 0, Collections.emptyList()))
-            .when(bulkOperations).execute();
+        when(mongoTemplate.bulkOps(eq(BulkOperations.BulkMode.UNORDERED), eq(SFMCRawRecord.class)))
+                .thenReturn(bulkOperations);
+        when(mongoTemplate.indexOps(eq(SFMCRawRecord.class))).thenReturn(indexOperations);
+        when(indexOperations.ensureIndex(any(Index.class))).thenReturn("index");
+        when(bulkOperations.remove(any(Query.class))).thenReturn(bulkOperations);
+        when(bulkOperations.execute()).thenReturn(bulkWriteResult);
     }
 
     @Test
-    void testDeleteInBatches() {
-        // Given
-        String fileKey = "testFile";
-        MCRawRecord record = new MCRawRecord();
-        record.set_id(new ObjectId());
-        List<MCRawRecord> records = Collections.singletonList(record);
+    void updateStatusForIds_ShouldUpdateStatusForGivenIds() {
+        // Arrange
+        when(mongoTemplate.bulkOps(any(), eq(SFMCRawRecord.class))).thenReturn(bulkOperations);
+        when(bulkOperations.execute()).thenReturn(bulkWriteResult);
 
-        // Mock find results
-        doReturn(records)
-            .doReturn(Collections.emptyList())
-            .when(mongoTemplate)
-            .find(any(Query.class), eq(MCRawRecord.class));
+        // Act
+        repository.updateStatusForIds(mockObjectIds, RawRecordStatus.PROCESSED);
 
-        // When
+        // Assert
+        verify(bulkOperations).updateMulti(
+                argThat(query -> query.getQueryObject().get("_id").toString().contains("$in")),
+                argThat(update -> update.getUpdateObject().get("$set").toString().contains("status"))
+        );
+        verify(bulkOperations).execute();
+    }
+
+    @Test
+    @DisplayName("Should delete records in batches")
+    void shouldDeleteInBatches() {
+        // Arrange
+        String fileKey = "test-file";
+        List<SFMCRawRecord> firstBatch = createMockRecords(2);
+        List<SFMCRawRecord> secondBatch = createMockRecords(3);
+        
+        when(mongoTemplate.find(any(Query.class), eq(SFMCRawRecord.class)))
+                .thenReturn(firstBatch)
+                .thenReturn(secondBatch)
+                .thenReturn(Collections.emptyList());
+        when(bulkWriteResult.getDeletedCount()).thenReturn(2L).thenReturn(3L).thenReturn(0L);
+
+        // Act
         repository.deleteInBatches(fileKey, 100);
 
-        // Then
-        verify(mongoTemplate, atLeast(1)).find(any(Query.class), eq(MCRawRecord.class));
-        verify(bulkOperations, atLeast(1)).execute();
+        // Assert
+        verify(mongoTemplate, times(3)).find(queryCaptor.capture(), eq(SFMCRawRecord.class));
+        verify(bulkOperations, times(2)).remove(any(Query.class));
+        verify(bulkOperations, times(2)).execute();
+        verify(indexOperations).ensureIndex(any(Index.class));
+
+        List<Query> capturedQueries = queryCaptor.getAllValues();
+        assertThat(capturedQueries).hasSize(3)
+            .allMatch(query -> query.toString().contains("fileKey"));
+    }
+
+    private List<SFMCRawRecord> createMockRecords(int count) {
+        return Arrays.stream(new int[count])
+                .mapToObj(i -> {
+                    SFMCRawRecord record = new SFMCRawRecord();
+                    record.set_id(new ObjectId());
+                    return record;
+                })
+                .collect(Collectors.toList());
     }
 }
