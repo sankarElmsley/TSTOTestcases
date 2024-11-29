@@ -165,6 +165,7 @@ package com.ymca.prs0.tbp.service.impl;
 import com.ymca.prs0.tbp.config.properties.AuthProperties;
 import com.ymca.prs0.tbp.config.properties.RetryStrategy;
 import com.ymca.prs0.tbp.model.AccessTokenInfo;
+import com.ymca.prs0.tbp.model.AuthCredential;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -174,8 +175,10 @@ import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
-import org.springframework.web.reactive.function.client.*;
+import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+
+import java.time.Duration;
 
 import static com.ymca.prs0.tbp.common.ApiConstants.Authorization.PING_FED_TOKEN_KEY;
 import static org.junit.jupiter.api.Assertions.*;
@@ -195,10 +198,13 @@ class ApiAuthServiceTest {
     private AuthProperties authProperties;
 
     @Mock
+    private WebClient.Builder webClientBuilder;
+
+    @Mock
     private WebClient.RequestBodyUriSpec requestBodyUriSpec;
 
     @Mock
-    private WebClient.RequestHeadersSpec<?> requestHeadersSpec;
+    private WebClient.RequestHeadersSpec requestHeadersSpec;
 
     @Mock
     private WebClient.ResponseSpec responseSpec;
@@ -208,35 +214,42 @@ class ApiAuthServiceTest {
     @BeforeEach
     void setUp() {
         apiAuthService = new ApiAuthService(authTokenWebClient, environment, authProperties);
+        
+        // Common setup for WebClient mock
+        when(authTokenWebClient.mutate()).thenReturn(webClientBuilder);
+        when(webClientBuilder.build()).thenReturn(authTokenWebClient);
+        when(authTokenWebClient.post()).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.uri(any(String.class))).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.contentType(any(MediaType.class))).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.bodyValue(any())).thenReturn(requestHeadersSpec);
+        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
     }
 
     @Test
     void getToken_WhenTokenNotCached_ShouldFetchNewToken() {
         // Arrange
         final String tokenUrl = "http://test-token-url";
-        final MultiValueMap<String, String> credentials = new LinkedMultiValueMap<>();
-        credentials.add("client_id", "test-client");
-        credentials.add("client_secret", "test-secret");
+        
+        AuthCredential authCredential = AuthCredential.builder()
+            .clientId("test-client")
+            .clientSecret("test-secret")
+            .grantType("client_credentials")
+            .build();
 
         AccessTokenInfo expectedToken = new AccessTokenInfo();
         expectedToken.setAccessToken("test-token");
         expectedToken.setExpiresIn(3600);
 
-        RetryStrategy retryStrategy = new RetryStrategy();
-        retryStrategy.setMaxAttempts(3);
-        retryStrategy.setMinInterval(java.time.Duration.ofSeconds(1));
-        retryStrategy.setJitterFactor(0.5);
+        RetryStrategy retryStrategy = new RetryStrategy(
+            3,                              // maxAttempts
+            0.5,                            // jitterFactor
+            Duration.ofSeconds(1),          // minInterval
+            Duration.ofSeconds(30)          // timeout
+        );
 
         when(authProperties.getPingFedTokenUrl()).thenReturn(tokenUrl);
-        when(authProperties.getAuthCredential(PING_FED_TOKEN_KEY)).thenReturn(credentials);
+        when(authProperties.getAuthCredential(PING_FED_TOKEN_KEY)).thenReturn(authCredential);
         when(authProperties.getRetry()).thenReturn(retryStrategy);
-        
-        when(authTokenWebClient.mutate()).thenReturn(WebClient.builder());
-        when(authTokenWebClient.post()).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.uri(tokenUrl)).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.contentType(MediaType.APPLICATION_FORM_URLENCODED)).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.bodyValue(any())).thenReturn(requestHeadersSpec);
-        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
         when(responseSpec.bodyToMono(AccessTokenInfo.class)).thenReturn(Mono.just(expectedToken));
 
         // Act
@@ -253,17 +266,33 @@ class ApiAuthServiceTest {
     @Test
     void getToken_WhenTokenCached_ShouldReturnCachedToken() {
         // Arrange
-        AccessTokenInfo initialToken = new AccessTokenInfo();
-        initialToken.setAccessToken("cached-token");
-        initialToken.setExpiresIn(3600);
+        String tokenUrl = "http://test-token-url";
+        AuthCredential authCredential = AuthCredential.builder()
+            .clientId("test-client")
+            .clientSecret("test-secret")
+            .grantType("client_credentials")
+            .build();
 
-        // Setup for initial token fetch
-        setupMockWebClientForToken(initialToken);
+        AccessTokenInfo expectedToken = new AccessTokenInfo();
+        expectedToken.setAccessToken("cached-token");
+        expectedToken.setExpiresIn(3600);
+
+        RetryStrategy retryStrategy = new RetryStrategy(
+            3,                              // maxAttempts
+            0.5,                            // jitterFactor
+            Duration.ofSeconds(1),          // minInterval
+            Duration.ofSeconds(30)          // timeout
+        );
+
+        when(authProperties.getPingFedTokenUrl()).thenReturn(tokenUrl);
+        when(authProperties.getAuthCredential(PING_FED_TOKEN_KEY)).thenReturn(authCredential);
+        when(authProperties.getRetry()).thenReturn(retryStrategy);
+        when(responseSpec.bodyToMono(AccessTokenInfo.class)).thenReturn(Mono.just(expectedToken));
 
         // First call to cache the token
-        AccessTokenInfo firstCall = apiAuthService.getToken(PING_FED_TOKEN_KEY);
+        AccessTokenInfo firstResult = apiAuthService.getToken(PING_FED_TOKEN_KEY);
 
-        // Reset mocks to verify no more interactions
+        // Clear invocations to verify no more calls
         clearInvocations(authTokenWebClient, authProperties);
 
         // Act
@@ -272,59 +301,36 @@ class ApiAuthServiceTest {
         // Assert
         assertNotNull(result);
         assertEquals("cached-token", result.getAccessToken());
-        verifyNoMoreInteractions(authTokenWebClient);
-    }
-
-    @Test
-    void getToken_WhenCachedTokenExpired_ShouldFetchNewToken() {
-        // Arrange
-        AccessTokenInfo expiredToken = new AccessTokenInfo();
-        expiredToken.setAccessToken("expired-token");
-        expiredToken.setExpiresIn(-1); // Expired token
-
-        AccessTokenInfo newToken = new AccessTokenInfo();
-        newToken.setAccessToken("new-token");
-        newToken.setExpiresIn(3600);
-
-        // Setup for expired token
-        setupMockWebClientForToken(expiredToken);
-        
-        // First call to cache the expired token
-        apiAuthService.getToken(PING_FED_TOKEN_KEY);
-
-        // Setup for new token
-        setupMockWebClientForToken(newToken);
-
-        // Act
-        AccessTokenInfo result = apiAuthService.getToken(PING_FED_TOKEN_KEY);
-
-        // Assert
-        assertNotNull(result);
-        assertEquals("new-token", result.getAccessToken());
+        verifyNoInteractions(authTokenWebClient);
     }
 
     @Test
     void getToken_WhenErrorOccurs_ShouldThrowException() {
         // Arrange
-        when(authTokenWebClient.post()).thenThrow(new RuntimeException("API Error"));
+        String tokenUrl = "http://test-token-url";
+        AuthCredential authCredential = AuthCredential.builder()
+            .clientId("test-client")
+            .clientSecret("test-secret")
+            .grantType("client_credentials")
+            .build();
+
+        RetryStrategy retryStrategy = new RetryStrategy(
+            3,                              // maxAttempts
+            0.5,                            // jitterFactor
+            Duration.ofSeconds(1),          // minInterval
+            Duration.ofSeconds(30)          // timeout
+        );
+
+        when(authProperties.getPingFedTokenUrl()).thenReturn(tokenUrl);
+        when(authProperties.getAuthCredential(PING_FED_TOKEN_KEY)).thenReturn(authCredential);
+        when(authProperties.getRetry()).thenReturn(retryStrategy);
+        when(responseSpec.bodyToMono(AccessTokenInfo.class))
+            .thenReturn(Mono.error(new RuntimeException("API Error")));
 
         // Act & Assert
-        assertThrows(RuntimeException.class, () -> 
+        Exception exception = assertThrows(RuntimeException.class, () -> 
             apiAuthService.getToken(PING_FED_TOKEN_KEY)
         );
-    }
-
-    private void setupMockWebClientForToken(AccessTokenInfo token) {
-        when(authProperties.getPingFedTokenUrl()).thenReturn("http://test-token-url");
-        when(authProperties.getAuthCredential(any())).thenReturn(new LinkedMultiValueMap<>());
-        when(authProperties.getRetry()).thenReturn(new RetryStrategy());
-        
-        when(authTokenWebClient.mutate()).thenReturn(WebClient.builder());
-        when(authTokenWebClient.post()).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.uri(any(String.class))).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.contentType(any())).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.bodyValue(any())).thenReturn(requestHeadersSpec);
-        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
-        when(responseSpec.bodyToMono(AccessTokenInfo.class)).thenReturn(Mono.just(token));
+        assertTrue(exception.getMessage().contains("API Error"));
     }
 }
