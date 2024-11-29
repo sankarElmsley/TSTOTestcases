@@ -160,3 +160,134 @@ describe('CreditcardUtilityService', () => {
 });
 
 
+import org.bson.types.ObjectId;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.mongodb.core.BulkOperations;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.data.mongodb.core.index.IndexOperations;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.Arrays;
+import java.util.List;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class MCRawRecordCustomRepositoryImplTest {
+
+    @Mock
+    private MongoTemplate mongoTemplate;
+
+    @Mock
+    private BulkOperations bulkOperations;
+
+    @Mock
+    private BulkWriteResult bulkWriteResult;
+
+    @Mock
+    private IndexOperations indexOperations;
+
+    @InjectMocks
+    private MCRawRecordCustomRepositoryImpl repository;
+
+    private final List<String> mockIds = Arrays.asList("507f1f77bcf86cd799439011", "507f1f77bcf86cd799439012");
+
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(repository, "deleteBatchSize", 1000);
+    }
+
+    @Test
+    void updateStatusForIds_ShouldUpdateStatusForGivenIds() {
+        // Arrange
+        when(mongoTemplate.bulkOps(any(), eq(MCRawRecord.class))).thenReturn(bulkOperations);
+        when(bulkOperations.execute()).thenReturn(bulkWriteResult);
+
+        // Act
+        repository.updateStatusForIds(mockIds, RawRecordStatus.PROCESSED);
+
+        // Assert
+        verify(bulkOperations).updateMulti(
+            argThat(query -> 
+                query.getQueryObject().get("_id").toString().contains("$in")
+            ),
+            argThat(update -> 
+                update.getUpdateObject().get("$set").toString().contains("status")
+            )
+        );
+        verify(bulkOperations).execute();
+    }
+
+    @Test
+    void updateStatusAndErrorMsgForIds_ShouldUpdateStatusAndErrorMsg() {
+        // Act
+        repository.updateStatusAndErrorMsgForIds(mockIds, RawRecordStatus.ERROR, "Test error");
+
+        // Assert
+        verify(mongoTemplate).updateMulti(
+            argThat(query -> 
+                query.getQueryObject().get("_id").toString().contains("$in")
+            ),
+            argThat(update -> {
+                String updateObj = update.getUpdateObject().toString();
+                return updateObj.contains("status") && updateObj.contains("errorMsg");
+            }),
+            eq(MCRawRecord.class)
+        );
+    }
+
+    @Test
+    void deleteInBatches_ShouldDeleteRecordsInBatches() {
+        // Arrange
+        String fileKey = "test-file-key";
+        MCRawRecord record1 = new MCRawRecord();
+        record1.set_id(new ObjectId("507f1f77bcf86cd799439011"));
+        MCRawRecord record2 = new MCRawRecord();
+        record2.set_id(new ObjectId("507f1f77bcf86cd799439012"));
+        List<MCRawRecord> records = Arrays.asList(record1, record2);
+
+        when(mongoTemplate.bulkOps(any(), eq(MCRawRecord.class))).thenReturn(bulkOperations);
+        when(mongoTemplate.indexOps(MCRawRecord.class)).thenReturn(indexOperations);
+        when(mongoTemplate.find(any(Query.class), eq(MCRawRecord.class)))
+            .thenReturn(records)
+            .thenReturn(Arrays.asList());
+        when(bulkOperations.execute()).thenReturn(bulkWriteResult);
+        when(bulkWriteResult.getDeletedCount()).thenReturn(2L, 0L);
+
+        // Act
+        repository.deleteInBatches(fileKey, 1000);
+
+        // Assert
+        verify(mongoTemplate, times(2)).find(any(Query.class), eq(MCRawRecord.class));
+        verify(bulkOperations, times(2)).execute();
+        verify(indexOperations).ensureIndex(any());
+    }
+
+    @Test
+    void deleteInBatches_WhenNoRecordsFound_ShouldNotDelete() {
+        // Arrange
+        String fileKey = "test-file-key";
+        when(mongoTemplate.bulkOps(any(), eq(MCRawRecord.class))).thenReturn(bulkOperations);
+        when(mongoTemplate.indexOps(MCRawRecord.class)).thenReturn(indexOperations);
+        when(mongoTemplate.find(any(Query.class), eq(MCRawRecord.class)))
+            .thenReturn(Arrays.asList());
+
+        // Act
+        repository.deleteInBatches(fileKey, 1000);
+
+        // Assert
+        verify(mongoTemplate, times(1)).find(any(Query.class), eq(MCRawRecord.class));
+        verify(bulkOperations, never()).execute();
+        verify(indexOperations).ensureIndex(any());
+    }
+}
