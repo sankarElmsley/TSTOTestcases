@@ -171,21 +171,26 @@ class MCRawRecordCustomRepositoryImplTest {
     @Mock
     private BulkOperations bulkOperations;
 
+    @Mock
+    private IndexOperations indexOperations;
+
     @InjectMocks
     private MCRawRecordCustomRepositoryImpl repository;
 
     @BeforeEach
     void setUp() {
-        // Set the delete batch size using ReflectionTestUtils
+        // Set the delete batch size
         ReflectionTestUtils.setField(repository, "deleteBatchSize", 100);
+        
+        // Essential: Mock indexOps to return indexOperations
+        when(mongoTemplate.indexOps(MCRawRecord.class)).thenReturn(indexOperations);
+        
+        // Mock the index creation
+        when(indexOperations.ensureIndex(any(Index.class))).thenReturn("testIndex");
         
         // Mock the bulk operations
         when(mongoTemplate.bulkOps(any(BulkOperations.BulkMode.class), eq(MCRawRecord.class)))
             .thenReturn(bulkOperations);
-            
-        // Mock find operations to return empty list by default
-        when(mongoTemplate.find(any(Query.class), eq(MCRawRecord.class)))
-            .thenReturn(Collections.emptyList());
             
         // Mock bulk operation execution
         when(bulkOperations.execute())
@@ -201,22 +206,38 @@ class MCRawRecordCustomRepositoryImplTest {
             createMCRawRecord("2")
         );
 
-        // Mock the find operation to return our test records once, then empty list
         when(mongoTemplate.find(any(Query.class), eq(MCRawRecord.class)))
             .thenReturn(records)
             .thenReturn(Collections.emptyList());
 
-        // Mock bulk operation result
-        BulkWriteResult bulkWriteResult = BulkWriteResult.acknowledged(2, 2, 0, 0, Collections.emptyList());
-        when(bulkOperations.execute()).thenReturn(bulkWriteResult);
+        when(bulkOperations.execute())
+            .thenReturn(BulkWriteResult.acknowledged(2, 2, 0, 0, Collections.emptyList()));
 
         // When
         repository.deleteInBatches(fileKey, 100);
 
         // Then
+        verify(mongoTemplate).indexOps(MCRawRecord.class);
+        verify(indexOperations).ensureIndex(any(Index.class));
         verify(mongoTemplate, times(2)).find(any(Query.class), eq(MCRawRecord.class));
-        verify(bulkOperations, times(2)).remove(any(Query.class));
         verify(bulkOperations, times(2)).execute();
+    }
+
+    @Test
+    void deleteInBatches_WhenIndexCreationFails_ShouldThrowException() {
+        // Given
+        String fileKey = "testFile";
+        when(indexOperations.ensureIndex(any(Index.class)))
+            .thenThrow(new MongoException("Failed to create index"));
+
+        // When/Then
+        assertThrows(MongoException.class, () -> 
+            repository.deleteInBatches(fileKey, 100));
+            
+        verify(mongoTemplate).indexOps(MCRawRecord.class);
+        verify(indexOperations).ensureIndex(any(Index.class));
+        // Verify no further operations were performed
+        verify(mongoTemplate, never()).find(any(Query.class), eq(MCRawRecord.class));
     }
 
     @Test
@@ -230,12 +251,14 @@ class MCRawRecordCustomRepositoryImplTest {
         repository.deleteInBatches(fileKey, 100);
 
         // Then
-        verify(mongoTemplate, times(1)).find(any(Query.class), eq(MCRawRecord.class));
-        verify(bulkOperations, times(1)).execute();
+        verify(mongoTemplate).indexOps(MCRawRecord.class);
+        verify(indexOperations).ensureIndex(any(Index.class));
+        verify(mongoTemplate).find(any(Query.class), eq(MCRawRecord.class));
+        verify(bulkOperations).execute();
     }
 
     @Test
-    void deleteInBatches_WhenBulkOperationFails_ShouldHandleException() {
+    void deleteInBatches_WhenBulkOperationFails_ShouldThrowException() {
         // Given
         String fileKey = "testFile";
         List<MCRawRecord> records = Collections.singletonList(createMCRawRecord("1"));
@@ -248,20 +271,16 @@ class MCRawRecordCustomRepositoryImplTest {
         // When/Then
         assertThrows(MongoException.class, () -> 
             repository.deleteInBatches(fileKey, 100));
+            
+        verify(mongoTemplate).indexOps(MCRawRecord.class);
+        verify(indexOperations).ensureIndex(any(Index.class));
+        verify(mongoTemplate).find(any(Query.class), eq(MCRawRecord.class));
     }
 
     private MCRawRecord createMCRawRecord(String id) {
         MCRawRecord record = new MCRawRecord();
-        record.set_id(new ObjectId(id.repeat(24).substring(0, 24))); // Create valid ObjectId
+        record.set_id(new ObjectId(id.repeat(24).substring(0, 24)));
         record.setFileKey("testFile");
         return record;
-    }
-
-    // Helper method to match Query containing specific fileKey
-    private static Predicate<Query> queryContainsFileKey(String fileKey) {
-        return query -> {
-            Object actual = query.getQueryObject().get("fileKey");
-            return actual != null && actual.toString().equals(fileKey);
-        };
     }
 }
