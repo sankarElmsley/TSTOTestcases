@@ -161,191 +161,203 @@ describe('CreditcardUtilityService', () => {
 
 package com.ymca.prs0.tbp.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ymca.prs0.tbp.model.ApiResponse;
-import com.ymca.prs0.tbp.model.dto.TemplatedBatchDTO;
+import com.ymca.prs0.tbp.model.S3LockStatus;
+import com.ymca.prs0.tbp.model.S3ObjectStatus;
+import com.ymca.prs0.tbp.model.document.Tracker;
+import com.ymca.prs0.tbp.service.S3Service;
+import com.ymca.prs0.tbp.service.SMBService;
 import com.ymca.prs0.tbp.service.TemplatedBatchService;
+import com.ymca.prs0.tbp.service.TrackerService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.bind.MethodArgumentNotValidException;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @ExtendWith(MockitoExtension.class)
-class TemplatedBatchControllerTest {
+class S3TestControllerTest {
 
-    private static final String API_PATH = "/PRS0/batch/v1/templated-file";
-    private static final String FILE_KEY = "test-file-key";
-    private static final String REQUEST_ID = "test-request-id";
+    @Mock
+    private S3Service s3Service;
 
     @Mock
     private TemplatedBatchService templatedBatchService;
 
+    @Mock
+    private SMBService smbService;
+
+    @Mock
+    private TrackerService trackerService;
+
     @InjectMocks
-    private TemplatedBatchController templatedBatchController;
+    private S3TestController s3TestController;
 
     private MockMvc mockMvc;
-    private ObjectMapper objectMapper;
+    private static final String TEST_FILE_KEY = "test-file.txt";
+    private static final long TEST_CONTENT_LENGTH = 1000L;
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(templatedBatchController)
+        mockMvc = MockMvcBuilders.standaloneSetup(s3TestController)
                 .build();
-        objectMapper = new ObjectMapper();
     }
 
     @Test
-    void processTemplatedBatch_WhenValidRequest_ShouldReturnAccepted() throws Exception {
+    void getFileNames_WhenFilesExist_ShouldReturnFileList() throws Exception {
         // Arrange
-        TemplatedBatchDTO dto = new TemplatedBatchDTO();
-        dto.setFileKey(FILE_KEY);
-
-        Map<String, String> marTechResponse = new HashMap<>();
-        marTechResponse.put("message", "Task Submitted");
-        marTechResponse.put("status", "Queued");
-
-        ApiResponse apiResponse = ApiResponse.builder()
-                .id(REQUEST_ID)
-                .marTechResponse(marTechResponse)
-                .build();
-
-        when(templatedBatchService.processTemplatedBatch(any(TemplatedBatchDTO.class)))
-                .thenReturn(apiResponse);
-
-        String requestJson = objectMapper.writeValueAsString(dto);
+        List<String> expectedFiles = Arrays.asList(TEST_FILE_KEY, "test-file2.txt");
+        when(s3Service.pollFiles()).thenReturn(expectedFiles);
 
         // Act & Assert
-        mockMvc.perform(post(API_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(requestJson))
-                .andExpect(status().isAccepted())
-                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
-                .andExpect(jsonPath("$.id").value(REQUEST_ID))
-                .andExpect(jsonPath("$.marTechResponse.message").value("Task Submitted"))
-                .andExpect(jsonPath("$.marTechResponse.status").value("Queued"));
+        mockMvc.perform(get("/PRS0/v1/bucket/file-names"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/json"))
+                .andExpect(jsonPath("$[0]").value(TEST_FILE_KEY))
+                .andExpect(jsonPath("$[1]").value("test-file2.txt"));
 
-        verify(templatedBatchService).processTemplatedBatch(any(TemplatedBatchDTO.class));
+        verify(s3Service).pollFiles();
     }
 
     @Test
-    void processTemplatedBatch_WhenInvalidRequest_ShouldReturnBadRequest() throws Exception {
+    void getFileNames_WhenNoFiles_ShouldReturnEmptyList() throws Exception {
         // Arrange
-        TemplatedBatchDTO dto = new TemplatedBatchDTO();
-        // Not setting required fileKey to trigger validation error
-        
-        String requestJson = objectMapper.writeValueAsString(dto);
+        when(s3Service.pollFiles()).thenReturn(Collections.emptyList());
 
         // Act & Assert
-        mockMvc.perform(post(API_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(requestJson))
-                .andExpect(status().isBadRequest())
-                .andExpect(result -> assertTrue(result.getResolvedException() 
-                        instanceof MethodArgumentNotValidException));
+        mockMvc.perform(get("/PRS0/v1/bucket/file-names"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/json"))
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$").isEmpty());
 
-        verify(templatedBatchService, never()).processTemplatedBatch(any(TemplatedBatchDTO.class));
+        verify(s3Service).pollFiles();
     }
 
     @Test
-    void processTemplatedBatch_WhenMalformedJson_ShouldReturnBadRequest() throws Exception {
+    void processFile_WhenValidFile_ShouldCreateTrackerAndReturnFileList() throws Exception {
         // Arrange
-        String malformedJson = "{\"fileKey\": invalid-json}";
+        List<String> fileKeys = Collections.singletonList(TEST_FILE_KEY);
+        when(s3Service.pollFiles()).thenReturn(fileKeys);
+        when(s3Service.getS3ObjectContentLength(TEST_FILE_KEY)).thenReturn(TEST_CONTENT_LENGTH);
+
+        ArgumentCaptor<Tracker> trackerCaptor = ArgumentCaptor.forClass(Tracker.class);
 
         // Act & Assert
-        mockMvc.perform(post(API_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(malformedJson))
-                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/PRS0/v1/templated-batch/process-file"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/json"))
+                .andExpect(jsonPath("$[0]").value(TEST_FILE_KEY));
 
-        verify(templatedBatchService, never()).processTemplatedBatch(any(TemplatedBatchDTO.class));
+        verify(s3Service).pollFiles();
+        verify(s3Service).getS3ObjectContentLength(TEST_FILE_KEY);
+        verify(trackerService).saveTracker(trackerCaptor.capture());
+
+        // Verify tracker properties
+        Tracker capturedTracker = trackerCaptor.getValue();
+        assertEquals(TEST_FILE_KEY, capturedTracker.getFileKey());
+        assertEquals(S3LockStatus.Y, capturedTracker.getLockStatus());
+        assertEquals(S3ObjectStatus.INPROGRESS, capturedTracker.getStatus());
+        assertEquals(TEST_CONTENT_LENGTH, capturedTracker.getTotalContentlength());
     }
 
     @Test
-    void processTemplatedBatch_WhenEmptyRequest_ShouldReturnBadRequest() throws Exception {
-        // Act & Assert
-        mockMvc.perform(post(API_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{}"))
-                .andExpect(status().isBadRequest());
-
-        verify(templatedBatchService, never()).processTemplatedBatch(any(TemplatedBatchDTO.class));
-    }
-
-    @Test
-    void processTemplatedBatch_WhenServiceThrowsException_ShouldPropagateError() throws Exception {
+    void processFile_WhenZeroContentLength_ShouldNotCreateTracker() throws Exception {
         // Arrange
-        TemplatedBatchDTO dto = new TemplatedBatchDTO();
-        dto.setFileKey(FILE_KEY);
-
-        when(templatedBatchService.processTemplatedBatch(any(TemplatedBatchDTO.class)))
-                .thenThrow(new RuntimeException("Service error"));
-
-        String requestJson = objectMapper.writeValueAsString(dto);
+        List<String> fileKeys = Collections.singletonList(TEST_FILE_KEY);
+        when(s3Service.pollFiles()).thenReturn(fileKeys);
+        when(s3Service.getS3ObjectContentLength(TEST_FILE_KEY)).thenReturn(0L);
 
         // Act & Assert
-        mockMvc.perform(post(API_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(requestJson))
-                .andExpect(status().isInternalServerError());
+        mockMvc.perform(get("/PRS0/v1/templated-batch/process-file"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/json"))
+                .andExpect(jsonPath("$[0]").value(TEST_FILE_KEY));
 
-        verify(templatedBatchService).processTemplatedBatch(any(TemplatedBatchDTO.class));
+        verify(s3Service).pollFiles();
+        verify(s3Service).getS3ObjectContentLength(TEST_FILE_KEY);
+        verify(trackerService, never()).saveTracker(any(Tracker.class));
     }
 
     @Test
-    void processTemplatedBatch_WhenInvalidMediaType_ShouldReturnUnsupportedMediaType() throws Exception {
+    void renameFile_ShouldMoveFileAndReturnFileList() throws Exception {
         // Arrange
-        TemplatedBatchDTO dto = new TemplatedBatchDTO();
-        dto.setFileKey(FILE_KEY);
-        String requestJson = objectMapper.writeValueAsString(dto);
+        List<String> fileKeys = Collections.singletonList(TEST_FILE_KEY);
+        when(s3Service.pollFiles()).thenReturn(fileKeys);
 
         // Act & Assert
-        mockMvc.perform(post(API_PATH)
-                .contentType(MediaType.TEXT_PLAIN)
-                .content(requestJson))
-                .andExpect(status().isUnsupportedMediaType());
+        mockMvc.perform(get("/PRS0/v1/templated-batch/rename"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/json"))
+                .andExpect(jsonPath("$[0]").value(TEST_FILE_KEY));
 
-        verify(templatedBatchService, never()).processTemplatedBatch(any(TemplatedBatchDTO.class));
+        verify(s3Service).pollFiles();
+        verify(smbService).moveFile(eq(TEST_FILE_KEY), eq(""), eq("archive/"));
     }
 
     @Test
-    void processTemplatedBatch_WhenValidRequestWithNullOptionalFields_ShouldReturnAccepted() throws Exception {
+    void processFile_WhenNoFiles_ShouldReturnEmptyList() throws Exception {
         // Arrange
-        TemplatedBatchDTO dto = new TemplatedBatchDTO();
-        dto.setFileKey(FILE_KEY);
-        // Set any optional fields to null explicitly
-
-        ApiResponse apiResponse = ApiResponse.builder()
-                .id(REQUEST_ID)
-                .marTechResponse(new HashMap<>())
-                .build();
-
-        when(templatedBatchService.processTemplatedBatch(any(TemplatedBatchDTO.class)))
-                .thenReturn(apiResponse);
-
-        String requestJson = objectMapper.writeValueAsString(dto);
+        when(s3Service.pollFiles()).thenReturn(Collections.emptyList());
 
         // Act & Assert
-        mockMvc.perform(post(API_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(requestJson))
-                .andExpect(status().isAccepted())
-                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
-                .andExpect(jsonPath("$.id").value(REQUEST_ID));
+        mockMvc.perform(get("/PRS0/v1/templated-batch/process-file"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/json"))
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$").isEmpty());
 
-        verify(templatedBatchService).processTemplatedBatch(any(TemplatedBatchDTO.class));
+        verify(s3Service).pollFiles();
+        verify(s3Service, never()).getS3ObjectContentLength(any());
+        verify(trackerService, never()).saveTracker(any());
+    }
+
+    @Test
+    void renameFile_WhenNoFiles_ShouldReturnEmptyList() throws Exception {
+        // Arrange
+        when(s3Service.pollFiles()).thenReturn(Collections.emptyList());
+
+        // Act & Assert
+        mockMvc.perform(get("/PRS0/v1/templated-batch/rename"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/json"))
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$").isEmpty());
+
+        verify(s3Service).pollFiles();
+        verify(smbService, never()).moveFile(any(), any(), any());
+    }
+
+    @Test
+    void allEndpoints_WhenServiceThrowsException_ShouldPropagateError() throws Exception {
+        // Arrange
+        when(s3Service.pollFiles()).thenThrow(new RuntimeException("Service error"));
+
+        // Test all endpoints
+        String[] endpoints = {
+            "/PRS0/v1/bucket/file-names",
+            "/PRS0/v1/templated-batch/process-file",
+            "/PRS0/v1/templated-batch/rename"
+        };
+
+        for (String endpoint : endpoints) {
+            // Act & Assert
+            mockMvc.perform(get(endpoint))
+                    .andExpect(status().isInternalServerError());
+        }
     }
 }
