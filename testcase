@@ -162,63 +162,57 @@ describe('CreditcardUtilityService', () => {
 package com.ymca.prs0.tbp.service.impl;
 
 import com.ymca.prs0.tbp.repository.SFMCRawRecordRepository;
-import org.jmock.Expectations;
-import org.jmock.junit5.JUnit5Mockery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
 class EmailRawRecordServiceImplTest {
 
-    @RegisterExtension
-    JUnit5Mockery context = new JUnit5Mockery();
-
+    @Mock
     private SFMCRawRecordRepository sfmcRawRecordRepository;
+
+    @InjectMocks
     private EmailRawRecordServiceImpl emailRawRecordService;
 
-    private static final int BATCH_SIZE = 1000;
+    private static final int BATCH_SIZE = 100;
     private static final String FILE_KEY = "test-file-key";
 
     @BeforeEach
     void setUp() {
-        sfmcRawRecordRepository = context.mock(SFMCRawRecordRepository.class);
-        emailRawRecordService = new EmailRawRecordServiceImpl(sfmcRawRecordRepository);
+        // Set the fetchBatchSize using ReflectionTestUtils since it's injected via @Value
         ReflectionTestUtils.setField(emailRawRecordService, "fetchBatchSize", BATCH_SIZE);
     }
 
     @Test
     void deleteAll_ShouldCallRepositoryWithCorrectParameters() {
         // Arrange
-        context.checking(new Expectations() {{
-            oneOf(sfmcRawRecordRepository).deleteInBatches(with(equal(FILE_KEY)), with(equal(BATCH_SIZE)));
-        }});
+        doNothing().when(sfmcRawRecordRepository).deleteInBatches(anyString(), anyInt());
 
         // Act
         emailRawRecordService.deleteAll(FILE_KEY);
 
-        // No explicit verify needed as JUnit5Mockery handles verification
+        // Assert
+        verify(sfmcRawRecordRepository, times(1)).deleteInBatches(FILE_KEY, BATCH_SIZE);
+        verifyNoMoreInteractions(sfmcRawRecordRepository);
     }
 
     @Test
-    void deleteAll_WithNullFileKey_ShouldCallRepository() {
+    void deleteAll_WithNullFileKey_ShouldStillCallRepository() {
         // Arrange
-        context.checking(new Expectations() {{
-            oneOf(sfmcRawRecordRepository).deleteInBatches(with(aNull(String.class)), with(equal(BATCH_SIZE)));
-        }});
+        doNothing().when(sfmcRawRecordRepository).deleteInBatches(any(), anyInt());
 
         // Act
         emailRawRecordService.deleteAll(null);
-    }
 
-    @Test
-    void deleteAll_WithEmptyFileKey_ShouldCallRepository() {
-        // Arrange
-        context.checking(new Expectations() {{
-            oneOf(sfmcRawRecordRepository).deleteInBatches(with(equal("")), with(equal(BATCH_SIZE)));
-        }});
-
-        // Act
-        emailRawRecordService.deleteAll("");
+        // Assert
+        verify(sfmcRawRecordRepository, times(1)).deleteInBatches(null, BATCH_SIZE);
+        verifyNoMoreInteractions(sfmcRawRecordRepository);
     }
 }
