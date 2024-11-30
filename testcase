@@ -161,139 +161,191 @@ describe('CreditcardUtilityService', () => {
 
 package com.ymca.prs0.tbp.controller;
 
-import jakarta.servlet.RequestDispatcher;
-import jakarta.servlet.http.HttpServletRequest;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ymca.prs0.tbp.model.ApiResponse;
+import com.ymca.prs0.tbp.model.dto.TemplatedBatchDTO;
+import com.ymca.prs0.tbp.service.TemplatedBatchService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @ExtendWith(MockitoExtension.class)
-class ApiErrorControllerTest {
+class TemplatedBatchControllerTest {
+
+    private static final String API_PATH = "/PRS0/batch/v1/templated-file";
+    private static final String FILE_KEY = "test-file-key";
+    private static final String REQUEST_ID = "test-request-id";
 
     @Mock
-    private HttpServletRequest request;
+    private TemplatedBatchService templatedBatchService;
 
     @InjectMocks
-    private ApiErrorController apiErrorController;
+    private TemplatedBatchController templatedBatchController;
 
-    private MockHttpServletRequest mockRequest;
+    private MockMvc mockMvc;
+    private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
-        mockRequest = new MockHttpServletRequest();
+        mockMvc = MockMvcBuilders.standaloneSetup(templatedBatchController)
+                .build();
+        objectMapper = new ObjectMapper();
     }
 
     @Test
-    void handleError_WhenExceptionPresent_ShouldThrowException() {
+    void processTemplatedBatch_WhenValidRequest_ShouldReturnAccepted() throws Exception {
         // Arrange
-        RuntimeException testException = new RuntimeException("Test error");
-        when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
-            .thenReturn(testException);
+        TemplatedBatchDTO dto = new TemplatedBatchDTO();
+        dto.setFileKey(FILE_KEY);
+
+        Map<String, String> marTechResponse = new HashMap<>();
+        marTechResponse.put("message", "Task Submitted");
+        marTechResponse.put("status", "Queued");
+
+        ApiResponse apiResponse = ApiResponse.builder()
+                .id(REQUEST_ID)
+                .marTechResponse(marTechResponse)
+                .build();
+
+        when(templatedBatchService.processTemplatedBatch(any(TemplatedBatchDTO.class)))
+                .thenReturn(apiResponse);
+
+        String requestJson = objectMapper.writeValueAsString(dto);
 
         // Act & Assert
-        Exception thrownException = assertThrows(RuntimeException.class, () -> 
-            apiErrorController.handleError(request));
-        
-        assertEquals("Test error", thrownException.getMessage());
-        verify(request).getAttribute(RequestDispatcher.ERROR_EXCEPTION);
+        mockMvc.perform(post(API_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJson))
+                .andExpect(status().isAccepted())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.id").value(REQUEST_ID))
+                .andExpect(jsonPath("$.marTechResponse.message").value("Task Submitted"))
+                .andExpect(jsonPath("$.marTechResponse.status").value("Queued"));
+
+        verify(templatedBatchService).processTemplatedBatch(any(TemplatedBatchDTO.class));
     }
 
     @Test
-    void handleError_WhenNoException_ShouldNotThrowException() {
+    void processTemplatedBatch_WhenInvalidRequest_ShouldReturnBadRequest() throws Exception {
         // Arrange
-        when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
-            .thenReturn(null);
+        TemplatedBatchDTO dto = new TemplatedBatchDTO();
+        // Not setting required fileKey to trigger validation error
+        
+        String requestJson = objectMapper.writeValueAsString(dto);
 
         // Act & Assert
-        assertDoesNotThrow(() -> apiErrorController.handleError(request));
-        verify(request).getAttribute(RequestDispatcher.ERROR_EXCEPTION);
+        mockMvc.perform(post(API_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJson))
+                .andExpect(status().isBadRequest())
+                .andExpect(result -> assertTrue(result.getResolvedException() 
+                        instanceof MethodArgumentNotValidException));
+
+        verify(templatedBatchService, never()).processTemplatedBatch(any(TemplatedBatchDTO.class));
     }
 
     @Test
-    void handleError_WithMockRequest_WhenExceptionPresent_ShouldThrowException() {
+    void processTemplatedBatch_WhenMalformedJson_ShouldReturnBadRequest() throws Exception {
         // Arrange
-        RuntimeException testException = new RuntimeException("Test error");
-        mockRequest.setAttribute(RequestDispatcher.ERROR_EXCEPTION, testException);
+        String malformedJson = "{\"fileKey\": invalid-json}";
 
         // Act & Assert
-        Exception thrownException = assertThrows(RuntimeException.class, () -> 
-            apiErrorController.handleError(mockRequest));
-        
-        assertEquals("Test error", thrownException.getMessage());
+        mockMvc.perform(post(API_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(malformedJson))
+                .andExpect(status().isBadRequest());
+
+        verify(templatedBatchService, never()).processTemplatedBatch(any(TemplatedBatchDTO.class));
     }
 
     @Test
-    void handleError_WithMockRequest_WhenNoException_ShouldNotThrowException() {
+    void processTemplatedBatch_WhenEmptyRequest_ShouldReturnBadRequest() throws Exception {
         // Act & Assert
-        assertDoesNotThrow(() -> apiErrorController.handleError(mockRequest));
+        mockMvc.perform(post(API_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+                .andExpect(status().isBadRequest());
+
+        verify(templatedBatchService, never()).processTemplatedBatch(any(TemplatedBatchDTO.class));
     }
 
     @Test
-    void handleError_WithDifferentExceptionTypes() {
-        // Test with different types of exceptions
-        Exception[] exceptions = {
-            new IllegalArgumentException("Invalid argument"),
-            new NullPointerException("Null pointer"),
-            new IllegalStateException("Invalid state")
-        };
-
-        for (Exception testException : exceptions) {
-            // Arrange
-            when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
-                .thenReturn(testException);
-
-            // Act & Assert
-            Exception thrownException = assertThrows(Exception.class, () -> 
-                apiErrorController.handleError(request));
-            
-            assertEquals(testException.getMessage(), thrownException.getMessage());
-            assertEquals(testException.getClass(), thrownException.getClass());
-        }
-    }
-
-    @Test
-    void handleError_WithNestedExceptions() {
+    void processTemplatedBatch_WhenServiceThrowsException_ShouldPropagateError() throws Exception {
         // Arrange
-        Exception innerException = new IllegalStateException("Inner exception");
-        Exception outerException = new RuntimeException("Outer exception", innerException);
-        
-        when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
-            .thenReturn(outerException);
+        TemplatedBatchDTO dto = new TemplatedBatchDTO();
+        dto.setFileKey(FILE_KEY);
+
+        when(templatedBatchService.processTemplatedBatch(any(TemplatedBatchDTO.class)))
+                .thenThrow(new RuntimeException("Service error"));
+
+        String requestJson = objectMapper.writeValueAsString(dto);
 
         // Act & Assert
-        Exception thrownException = assertThrows(RuntimeException.class, () -> 
-            apiErrorController.handleError(request));
-        
-        assertEquals("Outer exception", thrownException.getMessage());
-        assertNotNull(thrownException.getCause());
-        assertEquals("Inner exception", thrownException.getCause().getMessage());
+        mockMvc.perform(post(API_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJson))
+                .andExpect(status().isInternalServerError());
+
+        verify(templatedBatchService).processTemplatedBatch(any(TemplatedBatchDTO.class));
     }
 
     @Test
-    void handleError_WithCustomException() {
+    void processTemplatedBatch_WhenInvalidMediaType_ShouldReturnUnsupportedMediaType() throws Exception {
         // Arrange
-        class CustomTestException extends Exception {
-            public CustomTestException(String message) {
-                super(message);
-            }
-        }
-
-        CustomTestException testException = new CustomTestException("Custom error");
-        when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
-            .thenReturn(testException);
+        TemplatedBatchDTO dto = new TemplatedBatchDTO();
+        dto.setFileKey(FILE_KEY);
+        String requestJson = objectMapper.writeValueAsString(dto);
 
         // Act & Assert
-        Exception thrownException = assertThrows(CustomTestException.class, () -> 
-            apiErrorController.handleError(request));
-        
-        assertEquals("Custom error", thrownException.getMessage());
-        assertTrue(thrownException instanceof CustomTestException);
+        mockMvc.perform(post(API_PATH)
+                .contentType(MediaType.TEXT_PLAIN)
+                .content(requestJson))
+                .andExpect(status().isUnsupportedMediaType());
+
+        verify(templatedBatchService, never()).processTemplatedBatch(any(TemplatedBatchDTO.class));
+    }
+
+    @Test
+    void processTemplatedBatch_WhenValidRequestWithNullOptionalFields_ShouldReturnAccepted() throws Exception {
+        // Arrange
+        TemplatedBatchDTO dto = new TemplatedBatchDTO();
+        dto.setFileKey(FILE_KEY);
+        // Set any optional fields to null explicitly
+
+        ApiResponse apiResponse = ApiResponse.builder()
+                .id(REQUEST_ID)
+                .marTechResponse(new HashMap<>())
+                .build();
+
+        when(templatedBatchService.processTemplatedBatch(any(TemplatedBatchDTO.class)))
+                .thenReturn(apiResponse);
+
+        String requestJson = objectMapper.writeValueAsString(dto);
+
+        // Act & Assert
+        mockMvc.perform(post(API_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJson))
+                .andExpect(status().isAccepted())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.id").value(REQUEST_ID));
+
+        verify(templatedBatchService).processTemplatedBatch(any(TemplatedBatchDTO.class));
     }
 }
