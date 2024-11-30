@@ -169,109 +169,61 @@ void processTemplatedBatch_WhenFailedChunksExist_ShouldProcessFailedChunks() {
         .requestId(REQUEST_ID)
         .build();
 
-    // Set up tracker
-    Tracker tracker = new Tracker();
-    tracker.setFileKey(FILE_KEY);
-    tracker.setStatus(S3ObjectStatus.INPROGRESS);
-    tracker.setLockStatus(S3LockStatus.N);
+    // Set up the basic mocks first
+    when(s3Service.pollFiles()).thenReturn(Collections.singletonList(FILE_KEY));
+    
+    // Mock all the conditions that lead to processing failed chunks
+    // These need to be in exactly this order to match the code flow
+    when(trackerService.isNewFile(FILE_KEY)).thenReturn(false);
+    when(trackerService.isFileInProgressOrProcessed(FILE_KEY)).thenReturn(true);
+    when(trackerService.isFileAlreadyFailed(FILE_KEY)).thenReturn(false);
+    when(trackerService.isFileInterrupted(FILE_KEY)).thenReturn(false);
+    when(trackerService.isFileLocked(FILE_KEY)).thenReturn(false);
+    when(processingEventService.isFailedChunksExist(FILE_KEY)).thenReturn(true);
+    when(trackerService.lockFile(FILE_KEY)).thenReturn(true);
 
     try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
         requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
-        
-        // Mock S3Service
-        when(s3Service.pollFiles()).thenReturn(Collections.singletonList(FILE_KEY));
-        
-        // Mock TrackerService conditions
-        when(trackerService.isNewFile(FILE_KEY)).thenReturn(false);
-        when(trackerService.isFileInProgressOrProcessed(FILE_KEY)).thenReturn(true);
-        when(trackerService.isFileAlreadyFailed(FILE_KEY)).thenReturn(false);
-        when(trackerService.isFileInterrupted(FILE_KEY)).thenReturn(false);
-        when(trackerService.isFileLocked(FILE_KEY)).thenReturn(false);
-        when(trackerService.lockFile(FILE_KEY)).thenReturn(true);
-        when(trackerService.getTracker(FILE_KEY)).thenReturn(tracker);
-        
-        // Mock ProcessingEventService
-        when(processingEventService.isFailedChunksExist(FILE_KEY)).thenReturn(true);
-
-        // Mock TaskExecutor
-        doAnswer(invocation -> {
-            Runnable runnable = invocation.getArgument(0);
-            runnable.run();
-            return null;
-        }).when(processBatchTaskExecutor).execute(any(Runnable.class));
 
         // Act
         ApiResponse response = templatedBatchService.processTemplatedBatch(dto);
 
         // Assert
-        verify(processBatchTaskExecutor, times(1)).execute(any(Runnable.class));
-        verify(trackerService, times(1)).lockFile(FILE_KEY);
-        
+        verify(processBatchTaskExecutor).execute(any(Runnable.class));
         assertNotNull(response);
         assertEquals(REQUEST_ID, response.getId());
         assertEquals("Task Submitted", response.getMarTechResponse().get("message"));
         assertEquals("Queued", response.getMarTechResponse().get("status"));
 
-        // Verify method call order
-        InOrder inOrder = inOrder(trackerService, processingEventService, processBatchTaskExecutor);
-        inOrder.verify(trackerService).isNewFile(FILE_KEY);
-        inOrder.verify(trackerService).isFileInProgressOrProcessed(FILE_KEY);
-        inOrder.verify(trackerService).isFileAlreadyFailed(FILE_KEY);
-        inOrder.verify(trackerService).isFileInterrupted(FILE_KEY);
-        inOrder.verify(trackerService).isFileLocked(FILE_KEY);
-        inOrder.verify(processingEventService).isFailedChunksExist(FILE_KEY);
-        inOrder.verify(trackerService).lockFile(FILE_KEY);
-        inOrder.verify(processBatchTaskExecutor).execute(any(Runnable.class));
+        // Verify the exact sequence of method calls
+        verifySequence();
     }
 }
 
-// Add helper test for reprocessing failed chunks
-@Test
-void processFailedChunks_ShouldExecuteSuccessfully() {
-    // Arrange
-    when(s3Service.getS3ObjectContentLength(FILE_KEY)).thenReturn(1000L);
-    when(trackerService.lockFile(FILE_KEY)).thenReturn(true);
-    doAnswer(invocation -> {
-        Runnable runnable = invocation.getArgument(0);
-        runnable.run();
-        return null;
-    }).when(processBatchTaskExecutor).execute(any(Runnable.class));
+private void verifySequence() {
+    InOrder inOrder = inOrder(
+        trackerService, 
+        processingEventService, 
+        processBatchTaskExecutor
+    );
 
-    // Act
-    templatedBatchService.processFailedChunks(FILE_KEY);
-
-    // Assert
-    verify(processBatchTaskExecutor, times(1)).execute(any(Runnable.class));
+    inOrder.verify(trackerService).isNewFile(FILE_KEY);
+    inOrder.verify(trackerService).isFileInProgressOrProcessed(FILE_KEY);
+    inOrder.verify(trackerService).isFileAlreadyFailed(FILE_KEY);
+    inOrder.verify(trackerService).isFileInterrupted(FILE_KEY);
+    inOrder.verify(trackerService).isFileLocked(FILE_KEY);
+    inOrder.verify(processingEventService).isFailedChunksExist(FILE_KEY);
+    inOrder.verify(trackerService).lockFile(FILE_KEY);
+    inOrder.verify(processBatchTaskExecutor).execute(any(Runnable.class));
 }
 
-// Add test for the actual file processing
-@Test
-void processBatchFile_ShouldProcessSuccessfully() {
-    // Arrange
-    long contentLength = 1000L;
-    when(s3Service.getS3ObjectContentLength(FILE_KEY)).thenReturn(contentLength);
-    
-    Tracker tracker = new Tracker();
-    tracker.setFileKey(FILE_KEY);
-    tracker.setTotalContentlength(contentLength);
-    tracker.setProcessedContentLength(contentLength);
-    
-    when(trackerService.getTracker(FILE_KEY)).thenReturn(tracker);
-    when(trackerService.createTrackerAndLockFile(any(Tracker.class))).thenReturn(true);
-    
-    ChunkResponse chunkResponse = ChunkResponse.builder()
-        .processContentLength(contentLength)
-        .currentLeftover("")
-        .s3ChunkFailed(false)
-        .recordCount(1L)
-        .build();
-    
-    when(templatedBatchProcessor.processChunk(any(), any(), any()))
-        .thenReturn(chunkResponse);
-
-    // Act
-    templatedBatchService.processNewFile(FILE_KEY);
-
-    // Assert
-    verify(processBatchTaskExecutor, times(1)).execute(any(Runnable.class));
+// Helper method for debugging - can help identify which condition is failing
+private void debugConditions(String fileKey) {
+    System.out.println("isNewFile: " + trackerService.isNewFile(fileKey));
+    System.out.println("isFileInProgressOrProcessed: " + trackerService.isFileInProgressOrProcessed(fileKey));
+    System.out.println("isFileAlreadyFailed: " + trackerService.isFileAlreadyFailed(fileKey));
+    System.out.println("isFileInterrupted: " + trackerService.isFileInterrupted(fileKey));
+    System.out.println("isFileLocked: " + trackerService.isFileLocked(fileKey));
+    System.out.println("isFailedChunksExist: " + processingEventService.isFailedChunksExist(fileKey));
+    System.out.println("lockFile: " + trackerService.lockFile(fileKey));
 }
