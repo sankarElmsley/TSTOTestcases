@@ -159,205 +159,183 @@ describe('CreditcardUtilityService', () => {
     });
 });
 
-package com.ymca.prs0.tbp.controller;
+package com.ymca.prs0.tbp.config;
 
-import com.ymca.prs0.tbp.model.S3LockStatus;
-import com.ymca.prs0.tbp.model.S3ObjectStatus;
-import com.ymca.prs0.tbp.model.document.Tracker;
-import com.ymca.prs0.tbp.service.S3Service;
-import com.ymca.prs0.tbp.service.SMBService;
-import com.ymca.prs0.tbp.service.TemplatedBatchService;
-import com.ymca.prs0.tbp.service.TrackerService;
+import com.hierynomus.mssmb2.SMB2Dialect;
+import com.hierynomus.smbj.SMBClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
+import software.amazon.awssdk.services.s3.S3Client;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.lang.reflect.Field;
+import java.net.URI;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@ExtendWith(MockitoExtension.class)
-class S3TestControllerTest {
-
-    @Mock
-    private S3Service s3Service;
-
-    @Mock
-    private TemplatedBatchService templatedBatchService;
-
-    @Mock
-    private SMBService smbService;
-
-    @Mock
-    private TrackerService trackerService;
+@ExtendWith(SpringExtension.class)
+@TestPropertySource(properties = {
+    "aws.credentials.access-key=testAccessKey",
+    "aws.credentials.secret-key=testSecretKey",
+    "aws.s3.endpoint=http://localhost:4566"
+})
+class AppConfigTest {
 
     @InjectMocks
-    private S3TestController s3TestController;
-
-    private MockMvc mockMvc;
-    private static final String TEST_FILE_KEY = "test-file.txt";
-    private static final long TEST_CONTENT_LENGTH = 1000L;
+    private AppConfig appConfig;
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(s3TestController)
-                .build();
+        ReflectionTestUtils.setField(appConfig, "accessKey", "testAccessKey");
+        ReflectionTestUtils.setField(appConfig, "secretKey", "testSecretKey");
+        ReflectionTestUtils.setField(appConfig, "s3EndPoint", "http://localhost:4566");
     }
 
     @Test
-    void getFileNames_WhenFilesExist_ShouldReturnFileList() throws Exception {
-        // Arrange
-        List<String> expectedFiles = Arrays.asList(TEST_FILE_KEY, "test-file2.txt");
-        when(s3Service.pollFiles()).thenReturn(expectedFiles);
+    void s3Client_ShouldCreateValidClient() {
+        // Act
+        S3Client s3Client = appConfig.s3Client();
 
-        // Act & Assert
-        mockMvc.perform(get("/PRS0/v1/bucket/file-names"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentType("application/json"))
-                .andExpect(jsonPath("$[0]").value(TEST_FILE_KEY))
-                .andExpect(jsonPath("$[1]").value("test-file2.txt"));
-
-        verify(s3Service).pollFiles();
+        // Assert
+        assertNotNull(s3Client, "S3Client should not be null");
+        
+        // Verify endpoint configuration
+        Field[] fields = s3Client.getClass().getDeclaredFields();
+        boolean hasCorrectEndpoint = false;
+        for (Field field : fields) {
+            field.setAccessible(true);
+            try {
+                Object value = field.get(s3Client);
+                if (value instanceof URI) {
+                    URI uri = (URI) value;
+                    assertEquals("http://localhost:4566", uri.toString(), "Endpoint should match configured value");
+                    hasCorrectEndpoint = true;
+                }
+            } catch (IllegalAccessException e) {
+                fail("Failed to access field: " + e.getMessage());
+            }
+            field.setAccessible(false);
+        }
+        assertTrue(hasCorrectEndpoint, "S3Client should have correct endpoint configured");
     }
 
     @Test
-    void getFileNames_WhenNoFiles_ShouldReturnEmptyList() throws Exception {
-        // Arrange
-        when(s3Service.pollFiles()).thenReturn(Collections.emptyList());
+    void s3Client_ShouldHaveCorrectCredentials() {
+        // Act
+        S3Client s3Client = appConfig.s3Client();
 
-        // Act & Assert
-        mockMvc.perform(get("/PRS0/v1/bucket/file-names"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentType("application/json"))
-                .andExpect(jsonPath("$").isArray())
-                .andExpect(jsonPath("$").isEmpty());
-
-        verify(s3Service).pollFiles();
+        // Assert
+        assertNotNull(s3Client, "S3Client should not be null");
+        
+        // Verify credentials
+        try {
+            Field credentialsProviderField = s3Client.getClass().getDeclaredField("credentialsProvider");
+            credentialsProviderField.setAccessible(true);
+            Object credentialsProvider = credentialsProviderField.get(s3Client);
+            Field credentialsField = credentialsProvider.getClass().getDeclaredField("awsCredentials");
+            credentialsField.setAccessible(true);
+            AwsCredentials credentials = (AwsCredentials) credentialsField.get(credentialsProvider);
+            
+            assertEquals("testAccessKey", credentials.accessKeyId(), "Access key should match configured value");
+            assertEquals("testSecretKey", credentials.secretAccessKey(), "Secret key should match configured value");
+            
+        } catch (Exception e) {
+            fail("Failed to verify credentials: " + e.getMessage());
+        }
     }
 
     @Test
-    void processFile_WhenValidFile_ShouldCreateTrackerAndReturnFileList() throws Exception {
-        // Arrange
-        List<String> fileKeys = Collections.singletonList(TEST_FILE_KEY);
-        when(s3Service.pollFiles()).thenReturn(fileKeys);
-        when(s3Service.getS3ObjectContentLength(TEST_FILE_KEY)).thenReturn(TEST_CONTENT_LENGTH);
+    void smbClient_ShouldCreateValidClient() {
+        // Act
+        SMBClient smbClient = appConfig.smbClient();
 
-        ArgumentCaptor<Tracker> trackerCaptor = ArgumentCaptor.forClass(Tracker.class);
-
-        // Act & Assert
-        mockMvc.perform(get("/PRS0/v1/templated-batch/process-file"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentType("application/json"))
-                .andExpect(jsonPath("$[0]").value(TEST_FILE_KEY));
-
-        verify(s3Service).pollFiles();
-        verify(s3Service).getS3ObjectContentLength(TEST_FILE_KEY);
-        verify(trackerService).saveTracker(trackerCaptor.capture());
-
-        // Verify tracker properties
-        Tracker capturedTracker = trackerCaptor.getValue();
-        assertEquals(TEST_FILE_KEY, capturedTracker.getFileKey());
-        assertEquals(S3LockStatus.Y, capturedTracker.getLockStatus());
-        assertEquals(S3ObjectStatus.INPROGRESS, capturedTracker.getStatus());
-        assertEquals(TEST_CONTENT_LENGTH, capturedTracker.getTotalContentlength());
+        // Assert
+        assertNotNull(smbClient, "SMBClient should not be null");
+        
+        // Verify SMB configuration
+        try {
+            Field configField = smbClient.getClass().getDeclaredField("config");
+            configField.setAccessible(true);
+            Object config = configField.get(smbClient);
+            
+            Field dialectsField = config.getClass().getDeclaredField("dialects");
+            dialectsField.setAccessible(true);
+            Object dialects = dialectsField.get(config);
+            
+            assertTrue(((Iterable<?>) dialects).iterator().hasNext(), "Dialects should not be empty");
+            assertEquals(
+                SMB2Dialect.SMB_3_1_1, 
+                ((Iterable<?>) dialects).iterator().next(), 
+                "Should support SMB 3.1.1 dialect"
+            );
+            
+            Field encryptDataField = config.getClass().getDeclaredField("encryptData");
+            encryptDataField.setAccessible(true);
+            boolean encryptData = (boolean) encryptDataField.get(config);
+            assertTrue(encryptData, "Data encryption should be enabled");
+            
+        } catch (Exception e) {
+            fail("Failed to verify SMB configuration: " + e.getMessage());
+        }
     }
 
     @Test
-    void processFile_WhenZeroContentLength_ShouldNotCreateTracker() throws Exception {
-        // Arrange
-        List<String> fileKeys = Collections.singletonList(TEST_FILE_KEY);
-        when(s3Service.pollFiles()).thenReturn(fileKeys);
-        when(s3Service.getS3ObjectContentLength(TEST_FILE_KEY)).thenReturn(0L);
+    void s3Client_ShouldHavePathStyleAccess() {
+        // Act
+        S3Client s3Client = appConfig.s3Client();
 
-        // Act & Assert
-        mockMvc.perform(get("/PRS0/v1/templated-batch/process-file"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentType("application/json"))
-                .andExpect(jsonPath("$[0]").value(TEST_FILE_KEY));
-
-        verify(s3Service).pollFiles();
-        verify(s3Service).getS3ObjectContentLength(TEST_FILE_KEY);
-        verify(trackerService, never()).saveTracker(any(Tracker.class));
+        // Assert
+        assertNotNull(s3Client, "S3Client should not be null");
+        
+        // Verify path style access configuration
+        try {
+            Field serviceConfigField = s3Client.getClass().getDeclaredField("serviceConfiguration");
+            serviceConfigField.setAccessible(true);
+            Object serviceConfig = serviceConfigField.get(s3Client);
+            
+            Field pathStyleField = serviceConfig.getClass().getDeclaredField("pathStyleAccessEnabled");
+            pathStyleField.setAccessible(true);
+            boolean pathStyleEnabled = (boolean) pathStyleField.get(serviceConfig);
+            
+            assertTrue(pathStyleEnabled, "Path style access should be enabled");
+            
+        } catch (Exception e) {
+            fail("Failed to verify path style access configuration: " + e.getMessage());
+        }
     }
 
     @Test
-    void renameFile_ShouldMoveFileAndReturnFileList() throws Exception {
-        // Arrange
-        List<String> fileKeys = Collections.singletonList(TEST_FILE_KEY);
-        when(s3Service.pollFiles()).thenReturn(fileKeys);
+    void s3Client_ShouldHaveCorrectTimeoutConfiguration() {
+        // Act
+        S3Client s3Client = appConfig.s3Client();
 
-        // Act & Assert
-        mockMvc.perform(get("/PRS0/v1/templated-batch/rename"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentType("application/json"))
-                .andExpect(jsonPath("$[0]").value(TEST_FILE_KEY));
-
-        verify(s3Service).pollFiles();
-        verify(smbService).moveFile(eq(TEST_FILE_KEY), eq(""), eq("archive/"));
-    }
-
-    @Test
-    void processFile_WhenNoFiles_ShouldReturnEmptyList() throws Exception {
-        // Arrange
-        when(s3Service.pollFiles()).thenReturn(Collections.emptyList());
-
-        // Act & Assert
-        mockMvc.perform(get("/PRS0/v1/templated-batch/process-file"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentType("application/json"))
-                .andExpect(jsonPath("$").isArray())
-                .andExpect(jsonPath("$").isEmpty());
-
-        verify(s3Service).pollFiles();
-        verify(s3Service, never()).getS3ObjectContentLength(any());
-        verify(trackerService, never()).saveTracker(any());
-    }
-
-    @Test
-    void renameFile_WhenNoFiles_ShouldReturnEmptyList() throws Exception {
-        // Arrange
-        when(s3Service.pollFiles()).thenReturn(Collections.emptyList());
-
-        // Act & Assert
-        mockMvc.perform(get("/PRS0/v1/templated-batch/rename"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentType("application/json"))
-                .andExpect(jsonPath("$").isArray())
-                .andExpect(jsonPath("$").isEmpty());
-
-        verify(s3Service).pollFiles();
-        verify(smbService, never()).moveFile(any(), any(), any());
-    }
-
-    @Test
-    void allEndpoints_WhenServiceThrowsException_ShouldPropagateError() throws Exception {
-        // Arrange
-        when(s3Service.pollFiles()).thenThrow(new RuntimeException("Service error"));
-
-        // Test all endpoints
-        String[] endpoints = {
-            "/PRS0/v1/bucket/file-names",
-            "/PRS0/v1/templated-batch/process-file",
-            "/PRS0/v1/templated-batch/rename"
-        };
-
-        for (String endpoint : endpoints) {
-            // Act & Assert
-            mockMvc.perform(get(endpoint))
-                    .andExpect(status().isInternalServerError());
+        // Assert
+        assertNotNull(s3Client, "S3Client should not be null");
+        
+        try {
+            Field httpClientField = s3Client.getClass().getDeclaredField("httpClient");
+            httpClientField.setAccessible(true);
+            Object httpClient = httpClientField.get(s3Client);
+            
+            // Verify socket timeout (5 minutes)
+            Field socketTimeoutField = httpClient.getClass().getDeclaredField("socketTimeout");
+            socketTimeoutField.setAccessible(true);
+            Duration socketTimeout = (Duration) socketTimeoutField.get(httpClient);
+            assertEquals(Duration.ofMinutes(5), socketTimeout, "Socket timeout should be 5 minutes");
+            
+            // Verify connection timeout (30 seconds)
+            Field connectionTimeoutField = httpClient.getClass().getDeclaredField("connectionTimeout");
+            connectionTimeoutField.setAccessible(true);
+            Duration connectionTimeout = (Duration) connectionTimeoutField.get(httpClient);
+            assertEquals(Duration.ofSeconds(30), connectionTimeout, "Connection timeout should be 30 seconds");
+            
+        } catch (Exception e) {
+            fail("Failed to verify timeout configuration: " + e.getMessage());
         }
     }
 }
