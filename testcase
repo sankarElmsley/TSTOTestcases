@@ -163,14 +163,18 @@ package com.ymca.prs0.tbp.service.impl;
 
 import com.ymca.prs0.tbp.repository.SFMCRawRecordRepository;
 import org.jmock.Expectations;
-import org.jmock.Mockery;
+import org.jmock.integration.junit5.JUnit5Mockery;
+import org.jmock.junit5.JUnit5Mockery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class EmailRawRecordServiceImplTest {
 
-    private final Mockery context = new Mockery();
+    @RegisterExtension
+    JUnit5Mockery context = new JUnit5Mockery();
+
     private SFMCRawRecordRepository sfmcRawRecordRepository;
     private EmailRawRecordServiceImpl emailRawRecordService;
 
@@ -186,18 +190,10 @@ class EmailRawRecordServiceImplTest {
 
     @Test
     void deleteAll_ShouldCallRepositoryWithCorrectParameters() {
-        // Setup expectations
         context.checking(new Expectations() {{
             oneOf(sfmcRawRecordRepository).deleteInBatches(FILE_KEY, BATCH_SIZE);
         }});
 
-        // Execute the method
         emailRawRecordService.deleteAll(FILE_KEY);
-
-        // Verify expectations
-        context.assertIsSatisfied();
     }
 }
-```
-
-Both approaches try to handle the reactive error scenario differently. Try either one and let me know if you still encounter issues. Also, it would be helpful to see the actual implementation of the `getNewToken` method in your `ApiAuthService` to better understand how the error is being handled there.
