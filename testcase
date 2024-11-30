@@ -159,214 +159,141 @@ describe('CreditcardUtilityService', () => {
     });
 });
 
-package com.ymca.prs0.tbp.service.impl;
+package com.ymca.prs0.tbp.controller;
 
-import com.ymca.prs0.tbp.model.EmailProcessStatus;
-import com.ymca.prs0.tbp.model.MCProcessStatus;
-import com.ymca.prs0.tbp.model.S3LockStatus;
-import com.ymca.prs0.tbp.model.S3ObjectStatus;
-import com.ymca.prs0.tbp.model.document.ProcessingEvent;
-import com.ymca.prs0.tbp.model.document.Tracker;
-import com.ymca.prs0.tbp.repository.TrackerRepository;
-import com.ymca.prs0.tbp.service.ProcessingEventService;
-import org.bson.types.ObjectId;
+import jakarta.servlet.RequestDispatcher;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
+import org.springframework.mock.web.MockHttpServletRequest;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class TrackerServiceImplTest {
+class ApiErrorControllerTest {
 
     @Mock
-    private TrackerRepository trackerRepository;
-
-    @Mock
-    private ProcessingEventService processingEventService;
+    private HttpServletRequest request;
 
     @InjectMocks
-    private TrackerServiceImpl trackerService;
+    private ApiErrorController apiErrorController;
 
-    private static final String FILE_KEY = "test-file-key";
-    private Tracker testTracker;
-    private ProcessingEvent testProcessingEvent;
+    private MockHttpServletRequest mockRequest;
 
     @BeforeEach
     void setUp() {
-        testTracker = new Tracker();
-        testTracker.setFileKey(FILE_KEY);
-        testTracker.setStatus(S3ObjectStatus.PENDING);
-        testTracker.setLockStatus(S3LockStatus.N);
-        testTracker.setTotalContentlength(1000L);
-        testTracker.setProcessedContentLength(0L);
-        testTracker.setProcessedRecCount(0L);
-        testTracker.setMcProcessStatus(MCProcessStatus.PENDING);
-        testTracker.setEmailProcessStatus(EmailProcessStatus.PENDING);
-
-        testProcessingEvent = new ProcessingEvent();
-        testProcessingEvent.setFileKey(FILE_KEY);
-        testProcessingEvent.setEndPos(999L);
-        testProcessingEvent.setStatus(S3ObjectStatus.PROCESSED);
+        mockRequest = new MockHttpServletRequest();
     }
 
     @Test
-    void isFileLocked_ShouldReturnRepositoryResult() {
+    void handleError_WhenExceptionPresent_ShouldThrowException() {
         // Arrange
-        when(trackerRepository.isFileLocked(FILE_KEY)).thenReturn(true);
-
-        // Act
-        boolean result = trackerService.isFileLocked(FILE_KEY);
-
-        // Assert
-        assertTrue(result);
-        verify(trackerRepository).isFileLocked(FILE_KEY);
-    }
-
-    @Test
-    void isNewFile_WhenFileNotExists_ShouldReturnTrue() {
-        // Arrange
-        when(trackerRepository.findFirstByFileKey(FILE_KEY)).thenReturn(Optional.empty());
-
-        // Act
-        boolean result = trackerService.isNewFile(FILE_KEY);
-
-        // Assert
-        assertTrue(result);
-        verify(trackerRepository).findFirstByFileKey(FILE_KEY);
-    }
-
-    @Test
-    void isFileAlreadyFailed_WhenFileFailed_ShouldReturnTrue() {
-        // Arrange
-        testTracker.setStatus(S3ObjectStatus.FAILED);
-        when(trackerRepository.findFirstByFileKeyAndStatus(FILE_KEY, S3ObjectStatus.FAILED))
-            .thenReturn(Optional.of(testTracker));
-
-        // Act
-        boolean result = trackerService.isFileAlreadyFailed(FILE_KEY);
-
-        // Assert
-        assertTrue(result);
-        verify(trackerRepository).findFirstByFileKeyAndStatus(FILE_KEY, S3ObjectStatus.FAILED);
-    }
-
-    @Test
-    void isFileInterrupted_WhenFileInterrupted_ShouldReturnTrue() {
-        // Arrange
-        testProcessingEvent.setEndPos(500L); // Less than total content length
-        when(trackerRepository.findFirstByFileKey(FILE_KEY)).thenReturn(Optional.of(testTracker));
-        when(processingEventService.getLastProcessingEvent(FILE_KEY)).thenReturn(testProcessingEvent);
-
-        // Act
-        boolean result = trackerService.isFileInterrupted(FILE_KEY);
-
-        // Assert
-        assertTrue(result);
-        verify(trackerRepository).findFirstByFileKey(FILE_KEY);
-        verify(processingEventService).getLastProcessingEvent(FILE_KEY);
-    }
-
-    @Test
-    void updateTracker_WhenProcessingComplete_ShouldUpdateStatus() {
-        // Arrange
-        testTracker.setTotalContentlength(1000L);
-        when(trackerRepository.findFirstByFileKey(FILE_KEY)).thenReturn(Optional.of(testTracker));
-        when(processingEventService.getSequencedProcessingEvents(FILE_KEY)).thenReturn(Arrays.asList(testProcessingEvent));
-
-        // Act
-        trackerService.updateTracker(FILE_KEY, S3LockStatus.N, 1000L, 100L, "");
-
-        // Assert
-        verify(trackerRepository).save(argThat(tracker -> 
-            tracker.getStatus() == S3ObjectStatus.PROCESSED &&
-            tracker.getProcessedContentLength() == 1000L &&
-            tracker.getProcessedRecCount() == 100L
-        ));
-    }
-
-    @Test
-    void updateInProgressJobs_ShouldUpdateAllInProgressStatuses() {
-        // Arrange
-        List<Tracker> inProgressTrackers = Arrays.asList(testTracker);
-        when(trackerRepository.findAllByStatus(S3ObjectStatus.INPROGRESS)).thenReturn(inProgressTrackers);
-        when(trackerRepository.findAllByMcProcessStatus(MCProcessStatus.INPROGRESS)).thenReturn(inProgressTrackers);
-        when(trackerRepository.findAllByEmailProcessStatus(EmailProcessStatus.INPROGRESS)).thenReturn(inProgressTrackers);
-
-        // Act
-        trackerService.updateInProgressJobs();
-
-        // Assert
-        verify(trackerRepository).updateLockAndStatusForIds(any(), eq(S3ObjectStatus.PENDING), eq(S3LockStatus.N));
-        verify(trackerRepository).updateMCProcessStatusForIds(any(), eq(MCProcessStatus.PENDING));
-        verify(trackerRepository).updateEmailProcessStatusForIds(any(), eq(EmailProcessStatus.PENDING));
-    }
-
-    @Test
-    void getFileKeysByMCProcessStatus_ShouldReturnFileKeys() {
-        // Arrange
-        List<Tracker> trackers = Arrays.asList(testTracker);
-        when(trackerRepository.findAllByStatusAndMcProcessStatus(S3ObjectStatus.PROCESSED, MCProcessStatus.PENDING))
-            .thenReturn(trackers);
-
-        // Act
-        List<String> result = trackerService.getFileKeysByMCProcessStatus(MCProcessStatus.PENDING);
-
-        // Assert
-        assertEquals(1, result.size());
-        assertEquals(FILE_KEY, result.get(0));
-    }
-
-    @Test
-    void updateStatus_ShouldCallRepository() {
-        // Act
-        trackerService.updateStatus(S3ObjectStatus.PROCESSED, FILE_KEY);
-
-        // Assert
-        verify(trackerRepository).updateStatus(S3ObjectStatus.PROCESSED, FILE_KEY);
-    }
-
-    @Test
-    void lockFile_ShouldReturnRepositoryResult() {
-        // Arrange
-        when(trackerRepository.lockFile(FILE_KEY)).thenReturn(true);
-
-        // Act
-        boolean result = trackerService.lockFile(FILE_KEY);
-
-        // Assert
-        assertTrue(result);
-        verify(trackerRepository).lockFile(FILE_KEY);
-    }
-
-    @Test
-    void getTracker_WhenTrackerNotFound_ShouldThrowException() {
-        // Arrange
-        when(trackerRepository.findFirstByFileKey(FILE_KEY)).thenReturn(Optional.empty());
+        RuntimeException testException = new RuntimeException("Test error");
+        when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
+            .thenReturn(testException);
 
         // Act & Assert
-        assertThrows(RuntimeException.class, () -> trackerService.getTracker(FILE_KEY));
+        Exception thrownException = assertThrows(RuntimeException.class, () -> 
+            apiErrorController.handleError(request));
+        
+        assertEquals("Test error", thrownException.getMessage());
+        verify(request).getAttribute(RequestDispatcher.ERROR_EXCEPTION);
     }
 
     @Test
-    void createTrackerAndLockFile_ShouldReturnRepositoryResult() {
+    void handleError_WhenNoException_ShouldNotThrowException() {
         // Arrange
-        when(trackerRepository.createTrackerAndLockFile(any(Tracker.class))).thenReturn(true);
+        when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
+            .thenReturn(null);
 
-        // Act
-        boolean result = trackerService.createTrackerAndLockFile(testTracker);
+        // Act & Assert
+        assertDoesNotThrow(() -> apiErrorController.handleError(request));
+        verify(request).getAttribute(RequestDispatcher.ERROR_EXCEPTION);
+    }
 
-        // Assert
-        assertTrue(result);
-        verify(trackerRepository).createTrackerAndLockFile(testTracker);
+    @Test
+    void handleError_WithMockRequest_WhenExceptionPresent_ShouldThrowException() {
+        // Arrange
+        RuntimeException testException = new RuntimeException("Test error");
+        mockRequest.setAttribute(RequestDispatcher.ERROR_EXCEPTION, testException);
+
+        // Act & Assert
+        Exception thrownException = assertThrows(RuntimeException.class, () -> 
+            apiErrorController.handleError(mockRequest));
+        
+        assertEquals("Test error", thrownException.getMessage());
+    }
+
+    @Test
+    void handleError_WithMockRequest_WhenNoException_ShouldNotThrowException() {
+        // Act & Assert
+        assertDoesNotThrow(() -> apiErrorController.handleError(mockRequest));
+    }
+
+    @Test
+    void handleError_WithDifferentExceptionTypes() {
+        // Test with different types of exceptions
+        Exception[] exceptions = {
+            new IllegalArgumentException("Invalid argument"),
+            new NullPointerException("Null pointer"),
+            new IllegalStateException("Invalid state")
+        };
+
+        for (Exception testException : exceptions) {
+            // Arrange
+            when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
+                .thenReturn(testException);
+
+            // Act & Assert
+            Exception thrownException = assertThrows(Exception.class, () -> 
+                apiErrorController.handleError(request));
+            
+            assertEquals(testException.getMessage(), thrownException.getMessage());
+            assertEquals(testException.getClass(), thrownException.getClass());
+        }
+    }
+
+    @Test
+    void handleError_WithNestedExceptions() {
+        // Arrange
+        Exception innerException = new IllegalStateException("Inner exception");
+        Exception outerException = new RuntimeException("Outer exception", innerException);
+        
+        when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
+            .thenReturn(outerException);
+
+        // Act & Assert
+        Exception thrownException = assertThrows(RuntimeException.class, () -> 
+            apiErrorController.handleError(request));
+        
+        assertEquals("Outer exception", thrownException.getMessage());
+        assertNotNull(thrownException.getCause());
+        assertEquals("Inner exception", thrownException.getCause().getMessage());
+    }
+
+    @Test
+    void handleError_WithCustomException() {
+        // Arrange
+        class CustomTestException extends Exception {
+            public CustomTestException(String message) {
+                super(message);
+            }
+        }
+
+        CustomTestException testException = new CustomTestException("Custom error");
+        when(request.getAttribute(RequestDispatcher.ERROR_EXCEPTION))
+            .thenReturn(testException);
+
+        // Act & Assert
+        Exception thrownException = assertThrows(CustomTestException.class, () -> 
+            apiErrorController.handleError(request));
+        
+        assertEquals("Custom error", thrownException.getMessage());
+        assertTrue(thrownException instanceof CustomTestException);
     }
 }
