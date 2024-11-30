@@ -163,7 +163,6 @@ package com.ymca.prs0.tbp.service.impl;
 
 import com.ymca.prs0.tbp.repository.SFMCRawRecordRepository;
 import org.jmock.Expectations;
-import org.jmock.integration.junit5.JUnit5Mockery;
 import org.jmock.junit5.JUnit5Mockery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -190,10 +189,36 @@ class EmailRawRecordServiceImplTest {
 
     @Test
     void deleteAll_ShouldCallRepositoryWithCorrectParameters() {
+        // Arrange
         context.checking(new Expectations() {{
-            oneOf(sfmcRawRecordRepository).deleteInBatches(FILE_KEY, BATCH_SIZE);
+            oneOf(sfmcRawRecordRepository).deleteInBatches(with(equal(FILE_KEY)), with(equal(BATCH_SIZE)));
         }});
 
+        // Act
         emailRawRecordService.deleteAll(FILE_KEY);
+
+        // No explicit verify needed as JUnit5Mockery handles verification
+    }
+
+    @Test
+    void deleteAll_WithNullFileKey_ShouldCallRepository() {
+        // Arrange
+        context.checking(new Expectations() {{
+            oneOf(sfmcRawRecordRepository).deleteInBatches(with(aNull(String.class)), with(equal(BATCH_SIZE)));
+        }});
+
+        // Act
+        emailRawRecordService.deleteAll(null);
+    }
+
+    @Test
+    void deleteAll_WithEmptyFileKey_ShouldCallRepository() {
+        // Arrange
+        context.checking(new Expectations() {{
+            oneOf(sfmcRawRecordRepository).deleteInBatches(with(equal("")), with(equal(BATCH_SIZE)));
+        }});
+
+        // Act
+        emailRawRecordService.deleteAll("");
     }
 }
