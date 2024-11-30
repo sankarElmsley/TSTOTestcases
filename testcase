@@ -161,151 +161,136 @@ describe('CreditcardUtilityService', () => {
 
 package com.ymca.prs0.tbp.service.impl;
 
-import com.ymca.prs0.tbp.model.S3ObjectStatus;
-import com.ymca.prs0.tbp.model.document.ProcessingEvent;
-import com.ymca.prs0.tbp.repository.ProcessingEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.*;
 
+import java.io.ByteArrayInputStream;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class ProcessingEventServiceImplTest {
+class S3ServiceImplTest {
 
     @Mock
-    private ProcessingEventRepository processingEventRepository;
+    private S3Client s3Client;
 
     @InjectMocks
-    private ProcessingEventServiceImpl processingEventService;
+    private S3ServiceImpl s3Service;
 
-    private static final String FILE_KEY = "test-file-key";
+    private static final String BUCKET = "test-bucket";
+    private static final String FILE_POLL_LOCATION = "test/location/";
+    private static final String TEST_FILE_KEY = "test-file.dat";
+    private static final String TEST_FILE_PATH = FILE_POLL_LOCATION + TEST_FILE_KEY;
 
-    private ProcessingEvent createProcessingEvent(long endPos, int sequenceNum, S3ObjectStatus status) {
-        ProcessingEvent event = new ProcessingEvent();
-        event.setFileKey(FILE_KEY);
-        event.setEndPos(endPos);
-        event.setSequenceNum(sequenceNum);
-        event.setStatus(status);
-        return event;
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(s3Service, "bucket", BUCKET);
+        ReflectionTestUtils.setField(s3Service, "filePollLocation", FILE_POLL_LOCATION);
     }
 
     @Test
-    void saveProcessEvent_ShouldCallRepository() {
+    void pollFiles_ShouldReturnDatFiles() {
         // Arrange
-        ProcessingEvent event = createProcessingEvent(100L, 1, S3ObjectStatus.SUCCESS);
-        when(processingEventRepository.save(any(ProcessingEvent.class))).thenReturn(event);
+        S3Object validFile1 = S3Object.builder()
+                .key(FILE_POLL_LOCATION + "file1.dat")
+                .build();
+        S3Object validFile2 = S3Object.builder()
+                .key(FILE_POLL_LOCATION + "file2.DAT")
+                .build();
+        S3Object invalidFile = S3Object.builder()
+                .key(FILE_POLL_LOCATION + "file3.txt")
+                .build();
+
+        ListObjectsV2Response listResponse = ListObjectsV2Response.builder()
+                .contents(Arrays.asList(validFile1, validFile2, invalidFile))
+                .build();
+
+        when(s3Client.listObjectsV2(any(ListObjectsV2Request.class)))
+                .thenReturn(listResponse);
 
         // Act
-        processingEventService.saveProcessEvent(event);
+        List<String> result = s3Service.pollFiles();
 
         // Assert
-        verify(processingEventRepository, times(1)).save(event);
-        verifyNoMoreInteractions(processingEventRepository);
-    }
-
-    @Test
-    void getSequencedProcessingEvents_ShouldReturnOrderedList() {
-        // Arrange
-        List<ProcessingEvent> events = Arrays.asList(
-            createProcessingEvent(100L, 1, S3ObjectStatus.SUCCESS),
-            createProcessingEvent(200L, 2, S3ObjectStatus.SUCCESS)
-        );
-        when(processingEventRepository.findAllByFileKeyOrderBySequenceNumAsc(FILE_KEY)).thenReturn(events);
-
-        // Act
-        List<ProcessingEvent> result = processingEventService.getSequencedProcessingEvents(FILE_KEY);
-
-        // Assert
-        assertNotNull(result);
         assertEquals(2, result.size());
-        assertEquals(1, result.get(0).getSequenceNum());
-        assertEquals(2, result.get(1).getSequenceNum());
-        verify(processingEventRepository).findAllByFileKeyOrderBySequenceNumAsc(FILE_KEY);
+        assertTrue(result.contains("file1.dat"));
+        assertTrue(result.contains("file2.DAT"));
+        assertFalse(result.contains("file3.txt"));
+        
+        verify(s3Client).listObjectsV2(any(ListObjectsV2Request.class));
     }
 
     @Test
-    void getLastProcessingEvent_WithEvents_ShouldReturnEventWithHighestEndPos() {
+    void readS3FileKey_ShouldReturnInputStream() {
         // Arrange
-        ProcessingEvent event1 = createProcessingEvent(100L, 1, S3ObjectStatus.SUCCESS);
-        ProcessingEvent event2 = createProcessingEvent(200L, 2, S3ObjectStatus.SUCCESS);
-        List<ProcessingEvent> events = Arrays.asList(event1, event2);
-        when(processingEventRepository.findAllByFileKey(FILE_KEY)).thenReturn(events);
+        byte[] testData = "test data".getBytes();
+        ByteArrayInputStream inputStream = new ByteArrayInputStream(testData);
+        ResponseInputStream<GetObjectResponse> responseInputStream = 
+            new ResponseInputStream<>(GetObjectResponse.builder().build(), inputStream);
+
+        when(s3Client.getObject(any(GetObjectRequest.class)))
+                .thenReturn(responseInputStream);
 
         // Act
-        ProcessingEvent result = processingEventService.getLastProcessingEvent(FILE_KEY);
+        ResponseInputStream<GetObjectResponse> result = s3Service.readS3FileKey(TEST_FILE_KEY);
 
         // Assert
         assertNotNull(result);
-        assertEquals(200L, result.getEndPos());
-        verify(processingEventRepository).findAllByFileKey(FILE_KEY);
+        verify(s3Client).getObject(any(GetObjectRequest.class));
     }
 
     @Test
-    void getLastProcessingEvent_WithNoEvents_ShouldReturnNull() {
+    void readS3FileKeyPart_ShouldReturnPartialInputStream() {
         // Arrange
-        when(processingEventRepository.findAllByFileKey(FILE_KEY)).thenReturn(Collections.emptyList());
+        long startPos = 0L;
+        long endPos = 100L;
+        byte[] testData = "partial test data".getBytes();
+        ByteArrayInputStream inputStream = new ByteArrayInputStream(testData);
+        ResponseInputStream<GetObjectResponse> responseInputStream = 
+            new ResponseInputStream<>(GetObjectResponse.builder().build(), inputStream);
+
+        when(s3Client.getObject(any(GetObjectRequest.class)))
+                .thenReturn(responseInputStream);
 
         // Act
-        ProcessingEvent result = processingEventService.getLastProcessingEvent(FILE_KEY);
+        ResponseInputStream<GetObjectResponse> result = 
+            s3Service.readS3FileKeyPart(TEST_FILE_KEY, startPos, endPos);
 
         // Assert
-        assertNull(result);
-        verify(processingEventRepository).findAllByFileKey(FILE_KEY);
+        assertNotNull(result);
+        verify(s3Client).getObject(argThat(request -> 
+            request.range().equals("bytes=" + startPos + "-" + endPos)
+        ));
     }
 
     @Test
-    void deleteAll_ShouldCallRepository() {
+    void getS3ObjectContentLength_ShouldReturnLength() {
         // Arrange
-        doNothing().when(processingEventRepository).deleteByFileKey(FILE_KEY);
+        long expectedLength = 1000L;
+        HeadObjectResponse headObjectResponse = HeadObjectResponse.builder()
+                .contentLength(expectedLength)
+                .build();
+
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(headObjectResponse);
 
         // Act
-        processingEventService.deleteAll(FILE_KEY);
+        long result = s3Service.getS3ObjectContentLength(TEST_FILE_KEY);
 
         // Assert
-        verify(processingEventRepository, times(1)).deleteByFileKey(FILE_KEY);
-        verifyNoMoreInteractions(processingEventRepository);
-    }
-
-    @Test
-    void isFailedChunksExist_WithFailedEvent_ShouldReturnTrue() {
-        // Arrange
-        List<ProcessingEvent> events = Arrays.asList(
-            createProcessingEvent(100L, 1, S3ObjectStatus.SUCCESS),
-            createProcessingEvent(200L, 2, S3ObjectStatus.FAILED)
-        );
-        when(processingEventRepository.findAllByFileKeyOrderBySequenceNumAsc(FILE_KEY)).thenReturn(events);
-
-        // Act
-        boolean result = processingEventService.isFailedChunksExist(FILE_KEY);
-
-        // Assert
-        assertTrue(result);
-        verify(processingEventRepository).findAllByFileKeyOrderBySequenceNumAsc(FILE_KEY);
-    }
-
-    @Test
-    void isFailedChunksExist_WithNoFailedEvents_ShouldReturnFalse() {
-        // Arrange
-        List<ProcessingEvent> events = Arrays.asList(
-            createProcessingEvent(100L, 1, S3ObjectStatus.SUCCESS),
-            createProcessingEvent(200L, 2, S3ObjectStatus.SUCCESS)
-        );
-        when(processingEventRepository.findAllByFileKeyOrderBySequenceNumAsc(FILE_KEY)).thenReturn(events);
-
-        // Act
-        boolean result = processingEventService.isFailedChunksExist(FILE_KEY);
-
-        // Assert
-        assertFalse(result);
-        verify(processingEventRepository).findAllByFileKeyOrderBySequenceNumAsc(FILE_KEY);
+        assertEquals(expectedLength, result);
+        verify(s3Client).headObject(any(HeadObjectRequest.class));
     }
 }
