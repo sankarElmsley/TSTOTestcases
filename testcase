@@ -161,109 +161,103 @@ describe('CreditcardUtilityService', () => {
 
 package com.ymca.prs0.tbp.service.impl;
 
-import com.jcraft.jsch.ChannelSftp;
-import com.jcraft.jsch.Session;
-import com.ymca.prs0.tbp.config.KeyConfig;
 import com.ymca.prs0.tbp.exception.InvalidInputException;
-import com.ymca.prs0.tbp.factory.SFTPSessionFactory;
-import com.ymca.prs0.tbp.model.ApiResponse;
-import com.ymca.prs0.tbp.model.EmailProcessStatus;
-import com.ymca.prs0.tbp.model.RawRecordStatus;
-import com.ymca.prs0.tbp.model.document.SFMCRawRecord;
+import com.ymca.prs0.tbp.model.*;
 import com.ymca.prs0.tbp.model.document.Tracker;
-import com.ymca.prs0.tbp.model.dto.TemplatedBatchEmailDTO;
-import com.ymca.prs0.tbp.repository.SFMCRawRecordRepository;
-import com.ymca.prs0.tbp.service.TrackerService;
+import com.ymca.prs0.tbp.model.dto.TemplatedBatchDTO;
+import com.ymca.prs0.tbp.processor.TemplatedBatchProcessor;
+import com.ymca.prs0.tbp.repository.HeaderContentRepository;
+import com.ymca.prs0.tbp.service.*;
 import com.ymca.prs0.tbp.util.RequestInfoHolder;
-import org.bson.types.ObjectId;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.task.TaskExecutor;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class TemplatedBatchEmailServiceImplTest {
+class TemplatedBatchServiceImplTest {
 
     @Mock
-    private TaskExecutor processEmailTaskExecutor;
+    private S3Service s3Service;
 
     @Mock
-    private SFMCRawRecordRepository sfmcRawRecordRepository;
-
-    @Mock
-    private SFTPSessionFactory sftpSessionFactory;
+    private SMBService smbService;
 
     @Mock
     private TrackerService trackerService;
 
     @Mock
-    private Session sftpSession;
+    private ProcessingEventService processingEventService;
 
     @Mock
-    private ChannelSftp channelSftp;
+    private TemplatedBatchProcessor templatedBatchProcessor;
+
+    @Mock
+    private HeaderContentRepository headerContentRepository;
+
+    @Mock
+    private TaskExecutor processBatchTaskExecutor;
+
+    @Mock
+    private MessageRawRecordService messageRawRecordService;
+
+    @Mock
+    private EmailRawRecordService emailRawRecordService;
 
     @InjectMocks
-    private TemplatedBatchEmailServiceImpl templatedBatchEmailService;
+    private TemplatedBatchServiceImpl templatedBatchService;
 
     private static final String FILE_KEY = "test-file-key";
     private static final String REQUEST_ID = "test-request-id";
-    private static final int FETCH_BATCH_SIZE = 100;
-    private static final int RECORDS_PER_FILE = 1000;
-    private static final String REMOTE_DIRECTORY = "/remote/test/dir";
-    private static final int BUFFER_SIZE = 8192;
-    private static final int MAX_RETRIES = 3;
-    private static final int PGP_ENCRYPTION_BLOCK_SIZE = 1024;
-    private static final int PGP_LITERAL_DATA_SIZE = 1024;
+    private static final long PART_SIZE = 52428800L; // 50MB
+    private static final String ARCHIVE_DIRECTORY = "/archive/dir";
 
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(templatedBatchEmailService, "fetchBatchSize", FETCH_BATCH_SIZE);
-        ReflectionTestUtils.setField(templatedBatchEmailService, "recordsPerFile", RECORDS_PER_FILE);
-        ReflectionTestUtils.setField(templatedBatchEmailService, "remoteDirectory", REMOTE_DIRECTORY);
-        ReflectionTestUtils.setField(templatedBatchEmailService, "bufferSize", BUFFER_SIZE);
-        ReflectionTestUtils.setField(templatedBatchEmailService, "maxRetries", MAX_RETRIES);
-        ReflectionTestUtils.setField(templatedBatchEmailService, "pgpEncryptionBlockSize", PGP_ENCRYPTION_BLOCK_SIZE);
-        ReflectionTestUtils.setField(templatedBatchEmailService, "pgpLiteralDataSize", PGP_LITERAL_DATA_SIZE);
+        ReflectionTestUtils.setField(templatedBatchService, "partSize", PART_SIZE);
+        ReflectionTestUtils.setField(templatedBatchService, "archiveDirectory", ARCHIVE_DIRECTORY);
     }
 
     @Test
-    void processTemplatedBatchEmails_WhenFileNotExists_ShouldThrowException() {
+    void processTemplatedBatch_WhenFileNotFound_ShouldThrowException() {
         // Arrange
-        TemplatedBatchEmailDTO dto = new TemplatedBatchEmailDTO();
-        dto.setFileKey(FILE_KEY);
-        when(trackerService.isNewFile(FILE_KEY)).thenReturn(true);
-
-        // Act & Assert
-        assertThrows(InvalidInputException.class, () -> 
-            templatedBatchEmailService.processTemplatedBatchEmails(dto));
-    }
-
-    @Test
-    void processTemplatedBatchEmails_WhenFileExistsAndNotProcessed_ShouldSubmitJob() {
-        // Arrange
-        TemplatedBatchEmailDTO dto = new TemplatedBatchEmailDTO();
+        TemplatedBatchDTO dto = new TemplatedBatchDTO();
         dto.setFileKey(FILE_KEY);
         
-        Tracker tracker = new Tracker();
-        tracker.setEmailProcessStatus(EmailProcessStatus.PENDING);
+        RequestInfo requestInfo = RequestInfo.builder()
+            .requestId(REQUEST_ID)
+            .build();
+
+        try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
+            requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
+            when(s3Service.pollFiles()).thenReturn(Collections.emptyList());
+
+            // Act & Assert
+            assertThrows(InvalidInputException.class, () -> 
+                templatedBatchService.processTemplatedBatch(dto));
+        }
+    }
+
+    @Test
+    void processTemplatedBatch_WhenNewFileAndLocked_ShouldSubmitJob() {
+        // Arrange
+        TemplatedBatchDTO dto = new TemplatedBatchDTO();
+        dto.setFileKey(FILE_KEY);
         
         RequestInfo requestInfo = RequestInfo.builder()
             .requestId(REQUEST_ID)
@@ -272,13 +266,12 @@ class TemplatedBatchEmailServiceImplTest {
         try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
             requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
             
-            when(trackerService.isNewFile(FILE_KEY)).thenReturn(false);
-            when(trackerService.getTracker(FILE_KEY)).thenReturn(tracker);
-            when(trackerService.lockEmailStatus(FILE_KEY)).thenReturn(true);
-            doNothing().when(trackerService).updateEmailProcessStatus(any(), anyString());
+            when(s3Service.pollFiles()).thenReturn(Arrays.asList(FILE_KEY));
+            when(trackerService.isNewFile(FILE_KEY)).thenReturn(true);
+            when(trackerService.isFileLocked(FILE_KEY)).thenReturn(true);
 
             // Act
-            ApiResponse response = templatedBatchEmailService.processTemplatedBatchEmails(dto);
+            ApiResponse response = templatedBatchService.processTemplatedBatch(dto);
 
             // Assert
             assertNotNull(response);
@@ -286,19 +279,61 @@ class TemplatedBatchEmailServiceImplTest {
             assertEquals("Task Submitted", response.getMarTechResponse().get("message"));
             assertEquals("Queued", response.getMarTechResponse().get("status"));
             
-            verify(trackerService).updateEmailProcessStatus(EmailProcessStatus.INPROGRESS, FILE_KEY);
-            verify(processEmailTaskExecutor).execute(any(Runnable.class));
+            verify(processBatchTaskExecutor).execute(any(Runnable.class));
         }
     }
 
     @Test
-    void processTemplatedBatchEmails_WhenProcessingInProgress_ShouldNotSubmitJob() {
+    void processNewFile_WhenValidContentLength_ShouldProcessFile() {
         // Arrange
-        TemplatedBatchEmailDTO dto = new TemplatedBatchEmailDTO();
+        long contentLength = 1000L;
+        when(s3Service.getS3ObjectContentLength(FILE_KEY)).thenReturn(contentLength);
+        when(trackerService.createTrackerAndLockFile(any(Tracker.class))).thenReturn(true);
+
+        // Act
+        templatedBatchService.processNewFile(FILE_KEY);
+
+        // Assert
+        verify(processBatchTaskExecutor).execute(any(Runnable.class));
+        verify(trackerService).createTrackerAndLockFile(argThat(tracker -> 
+            tracker.getFileKey().equals(FILE_KEY) &&
+            tracker.getStatus() == S3ObjectStatus.INPROGRESS &&
+            tracker.getTotalContentlength() == contentLength &&
+            tracker.getMcProcessStatus() == MCProcessStatus.PENDING &&
+            tracker.getEmailProcessStatus() == EmailProcessStatus.PENDING
+        ));
+    }
+
+    @Test
+    void reProcessFile_WhenValidContentLength_ShouldReprocessFile() {
+        // Arrange
+        long contentLength = 1000L;
+        when(s3Service.getS3ObjectContentLength(FILE_KEY)).thenReturn(contentLength);
+        when(trackerService.lockFile(FILE_KEY)).thenReturn(true);
+
+        // Act
+        templatedBatchService.reProcessFile(FILE_KEY);
+
+        // Assert
+        verify(processBatchTaskExecutor).execute(any(Runnable.class));
+    }
+
+    @Test
+    void deleteAll_ShouldDeleteAllRelatedRecords() {
+        // Act
+        templatedBatchService.deleteAll(FILE_KEY);
+
+        // Assert
+        verify(processingEventService).deleteAll(FILE_KEY);
+        verify(emailRawRecordService).deleteAll(FILE_KEY);
+        verify(messageRawRecordService).deleteAll(FILE_KEY);
+    }
+
+    @Test
+    void processTemplatedBatch_WhenFileInterrupted_ShouldReprocessFile() {
+        // Arrange
+        TemplatedBatchDTO dto = new TemplatedBatchDTO();
         dto.setFileKey(FILE_KEY);
-        
-        Tracker tracker = new Tracker();
-        tracker.setEmailProcessStatus(EmailProcessStatus.INPROGRESS);
         
         RequestInfo requestInfo = RequestInfo.builder()
             .requestId(REQUEST_ID)
@@ -307,31 +342,31 @@ class TemplatedBatchEmailServiceImplTest {
         try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
             requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
             
+            when(s3Service.pollFiles()).thenReturn(Arrays.asList(FILE_KEY));
             when(trackerService.isNewFile(FILE_KEY)).thenReturn(false);
-            when(trackerService.getTracker(FILE_KEY)).thenReturn(tracker);
+            when(trackerService.isFileInProgressOrProcessed(FILE_KEY)).thenReturn(true);
+            when(trackerService.isFileAlreadyFailed(FILE_KEY)).thenReturn(false);
+            when(trackerService.isFileInterrupted(FILE_KEY)).thenReturn(true);
+            when(trackerService.lockFile(FILE_KEY)).thenReturn(true);
 
             // Act
-            ApiResponse response = templatedBatchEmailService.processTemplatedBatchEmails(dto);
+            ApiResponse response = templatedBatchService.processTemplatedBatch(dto);
 
             // Assert
             assertNotNull(response);
             assertEquals(REQUEST_ID, response.getId());
-            assertEquals("Task is in progress or already processed", response.getMarTechResponse().get("message"));
-            assertEquals("Not Queued", response.getMarTechResponse().get("status"));
+            assertEquals("Task Submitted", response.getMarTechResponse().get("message"));
+            assertEquals("Queued", response.getMarTechResponse().get("status"));
             
-            verify(trackerService, never()).updateEmailProcessStatus(any(), anyString());
-            verify(processEmailTaskExecutor, never()).execute(any(Runnable.class));
+            verify(processBatchTaskExecutor).execute(any(Runnable.class));
         }
     }
 
     @Test
-    void processTemplatedBatchEmails_WhenFileAlreadyProcessed_ShouldNotSubmitJob() {
+    void processTemplatedBatch_WhenFailedChunksExist_ShouldProcessFailedChunks() {
         // Arrange
-        TemplatedBatchEmailDTO dto = new TemplatedBatchEmailDTO();
+        TemplatedBatchDTO dto = new TemplatedBatchDTO();
         dto.setFileKey(FILE_KEY);
-        
-        Tracker tracker = new Tracker();
-        tracker.setEmailProcessStatus(EmailProcessStatus.PROCESSED);
         
         RequestInfo requestInfo = RequestInfo.builder()
             .requestId(REQUEST_ID)
@@ -340,20 +375,25 @@ class TemplatedBatchEmailServiceImplTest {
         try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
             requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
             
+            when(s3Service.pollFiles()).thenReturn(Arrays.asList(FILE_KEY));
             when(trackerService.isNewFile(FILE_KEY)).thenReturn(false);
-            when(trackerService.getTracker(FILE_KEY)).thenReturn(tracker);
+            when(trackerService.isFileInProgressOrProcessed(FILE_KEY)).thenReturn(true);
+            when(trackerService.isFileAlreadyFailed(FILE_KEY)).thenReturn(false);
+            when(trackerService.isFileInterrupted(FILE_KEY)).thenReturn(false);
+            when(trackerService.isFileLocked(FILE_KEY)).thenReturn(false);
+            when(processingEventService.isFailedChunksExist(FILE_KEY)).thenReturn(true);
+            when(trackerService.lockFile(FILE_KEY)).thenReturn(true);
 
             // Act
-            ApiResponse response = templatedBatchEmailService.processTemplatedBatchEmails(dto);
+            ApiResponse response = templatedBatchService.processTemplatedBatch(dto);
 
             // Assert
             assertNotNull(response);
             assertEquals(REQUEST_ID, response.getId());
-            assertEquals("Task is in progress or already processed", response.getMarTechResponse().get("message"));
-            assertEquals("Not Queued", response.getMarTechResponse().get("status"));
+            assertEquals("Task Submitted", response.getMarTechResponse().get("message"));
+            assertEquals("Queued", response.getMarTechResponse().get("status"));
             
-            verify(trackerService, never()).updateEmailProcessStatus(any(), anyString());
-            verify(processEmailTaskExecutor, never()).execute(any(Runnable.class));
+            verify(processBatchTaskExecutor).execute(any(Runnable.class));
         }
     }
 }
