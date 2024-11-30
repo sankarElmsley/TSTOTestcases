@@ -159,109 +159,45 @@ describe('CreditcardUtilityService', () => {
     });
 });
 
-```java
-    @Test
-    void getToken_WhenErrorOccurs_ShouldThrowException() {
-        // Arrange
-        String tokenUrl = "http://test-token-url";
-        AuthCredential authCredential = AuthCredential.builder()
-            .clientId("test-client")
-            .clientSecret("test-secret")
-            .grantType("client_credentials")
-            .build();
+package com.ymca.prs0.tbp.service.impl;
 
-        RetryStrategy retryStrategy = new RetryStrategy(
-            3,                              // maxAttempts
-            0.5,                            // jitterFactor
-            Duration.ofSeconds(1),          // minInterval
-            Duration.ofSeconds(30)          // timeout
-        );
+import com.ymca.prs0.tbp.repository.SFMCRawRecordRepository;
+import org.jmock.Expectations;
+import org.jmock.Mockery;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
-        // Setup base configuration
-        when(authProperties.getPingFedTokenUrl()).thenReturn(tokenUrl);
-        when(authProperties.getAuthCredential(PING_FED_TOKEN_KEY)).thenReturn(authCredential);
-        when(authProperties.getRetry()).thenReturn(retryStrategy);
+class EmailRawRecordServiceImplTest {
 
-        // Mock WebClient to throw exception immediately
-        when(authTokenWebClient.post()).thenThrow(new RuntimeException("API Error"));
+    private final Mockery context = new Mockery();
+    private SFMCRawRecordRepository sfmcRawRecordRepository;
+    private EmailRawRecordServiceImpl emailRawRecordService;
 
-        // Act & Assert
-        assertThrows(RuntimeException.class, () -> {
-            try {
-                apiAuthService.getToken(PING_FED_TOKEN_KEY);
-            } catch (Exception e) {
-                // Verify the error message
-                assertEquals("API Error", e.getMessage());
-                throw e;
-            }
-        });
+    private static final int BATCH_SIZE = 1000;
+    private static final String FILE_KEY = "test-file-key";
 
-        // Verify interactions
-        verify(authProperties).getPingFedTokenUrl();
-        verify(authProperties).getAuthCredential(PING_FED_TOKEN_KEY);
-        verify(authProperties).getRetry();
-        verify(authTokenWebClient).post();
+    @BeforeEach
+    void setUp() {
+        sfmcRawRecordRepository = context.mock(SFMCRawRecordRepository.class);
+        emailRawRecordService = new EmailRawRecordServiceImpl(sfmcRawRecordRepository);
+        ReflectionTestUtils.setField(emailRawRecordService, "fetchBatchSize", BATCH_SIZE);
     }
-```
 
-Or alternatively, we could try this approach using StepVerifier:
-
-```java
     @Test
-    void getToken_WhenErrorOccurs_ShouldThrowException() {
-        // Arrange
-        String tokenUrl = "http://test-token-url";
-        AuthCredential authCredential = AuthCredential.builder()
-            .clientId("test-client")
-            .clientSecret("test-secret")
-            .grantType("client_credentials")
-            .build();
+    void deleteAll_ShouldCallRepositoryWithCorrectParameters() {
+        // Setup expectations
+        context.checking(new Expectations() {{
+            oneOf(sfmcRawRecordRepository).deleteInBatches(FILE_KEY, BATCH_SIZE);
+        }});
 
-        RetryStrategy retryStrategy = new RetryStrategy(
-            3,                              // maxAttempts
-            0.5,                            // jitterFactor
-            Duration.ofSeconds(1),          // minInterval
-            Duration.ofSeconds(30)          // timeout
-        );
+        // Execute the method
+        emailRawRecordService.deleteAll(FILE_KEY);
 
-        // Setup mocks
-        when(authProperties.getPingFedTokenUrl()).thenReturn(tokenUrl);
-        when(authProperties.getAuthCredential(PING_FED_TOKEN_KEY)).thenReturn(authCredential);
-        when(authProperties.getRetry()).thenReturn(retryStrategy);
-        
-        // Setup WebClient chain
-        when(authTokenWebClient.mutate()).thenReturn(webClientBuilder);
-        when(webClientBuilder.filter(any())).thenReturn(webClientBuilder);
-        when(webClientBuilder.build()).thenReturn(authTokenWebClient);
-        when(authTokenWebClient.post()).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.uri(any(String.class))).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.contentType(any(MediaType.class))).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.headers(any(Consumer.class))).thenReturn(requestBodyUriSpec);
-        when(requestBodyUriSpec.bodyValue(any())).thenReturn(requestHeadersSpec);
-        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
-
-        // Mock the error response
-        RuntimeException apiError = new RuntimeException("API Error");
-        when(responseSpec.bodyToMono(AccessTokenInfo.class))
-            .thenReturn(Mono.error(apiError));
-
-        // Act & Assert
-        StepVerifier.create(Mono.fromCallable(() -> apiAuthService.getToken(PING_FED_TOKEN_KEY)))
-            .expectErrorMatches(throwable -> 
-                throwable instanceof RuntimeException && 
-                throwable.getMessage().contains("API Error"))
-            .verify();
-
-        // Verify interactions
-        verify(authProperties).getPingFedTokenUrl();
-        verify(authProperties).getAuthCredential(PING_FED_TOKEN_KEY);
-        verify(authProperties).getRetry();
+        // Verify expectations
+        context.assertIsSatisfied();
     }
-```
-
-Make sure to add this import for the second approach:
-```java
-import reactor.test.StepVerifier;
+}
 ```
 
 Both approaches try to handle the reactive error scenario differently. Try either one and let me know if you still encounter issues. Also, it would be helpful to see the actual implementation of the `getNewToken` method in your `ApiAuthService` to better understand how the error is being handled there.
