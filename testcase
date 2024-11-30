@@ -161,7 +161,7 @@ describe('CreditcardUtilityService', () => {
 
 package com.ymca.prs0.tbp.service.impl;
 
-import com.ymca.prs0.tbp.repository.SFMCRawRecordRepository;
+import com.ymca.prs0.tbp.repository.MCRawRecordRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -173,46 +173,59 @@ import org.springframework.test.util.ReflectionTestUtils;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class EmailRawRecordServiceImplTest {
+class MessageRawRecordServiceImplTest {
 
     @Mock
-    private SFMCRawRecordRepository sfmcRawRecordRepository;
+    private MCRawRecordRepository mcRawRecordRepository;
 
     @InjectMocks
-    private EmailRawRecordServiceImpl emailRawRecordService;
+    private MessageRawRecordServiceImpl messageRawRecordService;
 
-    private static final int BATCH_SIZE = 100;
-    private static final String FILE_KEY = "test-file-key";
+    private static final int CHUNK_SIZE = 100;
+    private static final String FILE_KEY = "test-message-file-key";
 
     @BeforeEach
     void setUp() {
-        // Set the fetchBatchSize using ReflectionTestUtils since it's injected via @Value
-        ReflectionTestUtils.setField(emailRawRecordService, "fetchBatchSize", BATCH_SIZE);
+        // Set the mcBatchStepChunkSize using ReflectionTestUtils since it's injected via @Value
+        ReflectionTestUtils.setField(messageRawRecordService, "mcBatchStepChunkSize", CHUNK_SIZE);
     }
 
     @Test
     void deleteAll_ShouldCallRepositoryWithCorrectParameters() {
         // Arrange
-        doNothing().when(sfmcRawRecordRepository).deleteInBatches(anyString(), anyInt());
+        doNothing().when(mcRawRecordRepository).deleteInBatches(anyString(), anyInt());
 
         // Act
-        emailRawRecordService.deleteAll(FILE_KEY);
+        messageRawRecordService.deleteAll(FILE_KEY);
 
         // Assert
-        verify(sfmcRawRecordRepository, times(1)).deleteInBatches(FILE_KEY, BATCH_SIZE);
-        verifyNoMoreInteractions(sfmcRawRecordRepository);
+        verify(mcRawRecordRepository, times(1)).deleteInBatches(FILE_KEY, CHUNK_SIZE);
+        verifyNoMoreInteractions(mcRawRecordRepository);
     }
 
     @Test
     void deleteAll_WithNullFileKey_ShouldStillCallRepository() {
         // Arrange
-        doNothing().when(sfmcRawRecordRepository).deleteInBatches(any(), anyInt());
+        doNothing().when(mcRawRecordRepository).deleteInBatches(any(), anyInt());
 
         // Act
-        emailRawRecordService.deleteAll(null);
+        messageRawRecordService.deleteAll(null);
 
         // Assert
-        verify(sfmcRawRecordRepository, times(1)).deleteInBatches(null, BATCH_SIZE);
-        verifyNoMoreInteractions(sfmcRawRecordRepository);
+        verify(mcRawRecordRepository, times(1)).deleteInBatches(null, CHUNK_SIZE);
+        verifyNoMoreInteractions(mcRawRecordRepository);
+    }
+
+    @Test
+    void deleteAll_WithEmptyFileKey_ShouldCallRepository() {
+        // Arrange
+        doNothing().when(mcRawRecordRepository).deleteInBatches(anyString(), anyInt());
+
+        // Act
+        messageRawRecordService.deleteAll("");
+
+        // Assert
+        verify(mcRawRecordRepository, times(1)).deleteInBatches("", CHUNK_SIZE);
+        verifyNoMoreInteractions(mcRawRecordRepository);
     }
 }
