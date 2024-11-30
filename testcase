@@ -334,3 +334,71 @@ class ApiAuthServiceTest {
         assertTrue(exception.getMessage().contains("API Error"));
     }
 }
+
+
+
+```java
+    @Test
+    void getToken_WhenErrorOccurs_ShouldThrowException() {
+        // Arrange
+        String tokenUrl = "http://test-token-url";
+        AuthCredential authCredential = AuthCredential.builder()
+            .clientId("test-client")
+            .clientSecret("test-secret")
+            .grantType("client_credentials")
+            .build();
+
+        RetryStrategy retryStrategy = new RetryStrategy(
+            3,                              // maxAttempts
+            0.5,                            // jitterFactor
+            Duration.ofSeconds(1),          // minInterval
+            Duration.ofSeconds(30)          // timeout
+        );
+
+        // Set up the mocks
+        when(authProperties.getPingFedTokenUrl()).thenReturn(tokenUrl);
+        when(authProperties.getAuthCredential(PING_FED_TOKEN_KEY)).thenReturn(authCredential);
+        when(authProperties.getRetry()).thenReturn(retryStrategy);
+
+        // Mock the WebClient chain to throw an error
+        when(authTokenWebClient.mutate()).thenReturn(webClientBuilder);
+        when(webClientBuilder.filter(any())).thenReturn(webClientBuilder);
+        when(webClientBuilder.build()).thenReturn(authTokenWebClient);
+        when(authTokenWebClient.post()).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.uri(any(String.class))).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.contentType(any(MediaType.class))).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.headers(any(Consumer.class))).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.bodyValue(any())).thenReturn(requestHeadersSpec);
+        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.bodyToMono(AccessTokenInfo.class))
+            .thenReturn(Mono.error(new RuntimeException("API Error")));
+
+        // Act & Assert
+        Exception exception = assertThrows(
+            RuntimeException.class, 
+            () -> apiAuthService.getToken(PING_FED_TOKEN_KEY)
+        );
+        
+        // Verify the exception message
+        assertTrue(exception.getMessage().contains("API Error"));
+        
+        // Verify the interactions
+        verify(authProperties).getPingFedTokenUrl();
+        verify(authProperties).getAuthCredential(PING_FED_TOKEN_KEY);
+        verify(authProperties).getRetry();
+        verify(responseSpec).bodyToMono(AccessTokenInfo.class);
+    }
+```
+
+The key changes are:
+
+1. Set up the complete WebClient mock chain in the error test
+2. Ensure all necessary mocks are in place before the error simulation
+3. Added proper verification steps
+4. Made sure the error is properly propagated through the reactive chain
+
+The error was likely not being thrown because:
+1. Either the mock chain wasn't complete, or
+2. The error wasn't being properly propagated through the reactive pipeline
+
+This fixed version should now properly test the error scenario. Let me know if you still encounter any issues!
