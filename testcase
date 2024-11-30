@@ -265,8 +265,9 @@ class TemplatedBatchEmailServiceImplTest {
         Tracker tracker = new Tracker();
         tracker.setEmailProcessStatus(EmailProcessStatus.PENDING);
         
-        RequestInfoHolder.RequestInfo requestInfo = new RequestInfoHolder.RequestInfo();
-        requestInfo.setRequestId(REQUEST_ID);
+        RequestInfo requestInfo = RequestInfo.builder()
+            .requestId(REQUEST_ID)
+            .build();
 
         try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
             requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
@@ -299,8 +300,9 @@ class TemplatedBatchEmailServiceImplTest {
         Tracker tracker = new Tracker();
         tracker.setEmailProcessStatus(EmailProcessStatus.INPROGRESS);
         
-        RequestInfoHolder.RequestInfo requestInfo = new RequestInfoHolder.RequestInfo();
-        requestInfo.setRequestId(REQUEST_ID);
+        RequestInfo requestInfo = RequestInfo.builder()
+            .requestId(REQUEST_ID)
+            .build();
 
         try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
             requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
@@ -323,24 +325,35 @@ class TemplatedBatchEmailServiceImplTest {
     }
 
     @Test
-    void fetchRecords_ShouldReturnRecordsWithCorrectPagination() {
+    void processTemplatedBatchEmails_WhenFileAlreadyProcessed_ShouldNotSubmitJob() {
         // Arrange
-        ObjectId lastProcessedId = new ObjectId("000000000000000000000000");
-        Pageable expectedPageable = PageRequest.of(0, FETCH_BATCH_SIZE, Sort.by(Sort.Direction.ASC, "_id"));
-        List<SFMCRawRecord> expectedRecords = new ArrayList<>();
+        TemplatedBatchEmailDTO dto = new TemplatedBatchEmailDTO();
+        dto.setFileKey(FILE_KEY);
         
-        when(sfmcRawRecordRepository.findTopByFileKeyAndStatusAndIdGreaterThan(
-            FILE_KEY, RawRecordStatus.PENDING, lastProcessedId, expectedPageable
-        )).thenReturn(expectedRecords);
+        Tracker tracker = new Tracker();
+        tracker.setEmailProcessStatus(EmailProcessStatus.PROCESSED);
+        
+        RequestInfo requestInfo = RequestInfo.builder()
+            .requestId(REQUEST_ID)
+            .build();
 
-        // Act
-        List<SFMCRawRecord> result = templatedBatchEmailService.fetchRecords(FILE_KEY, lastProcessedId);
+        try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
+            requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
+            
+            when(trackerService.isNewFile(FILE_KEY)).thenReturn(false);
+            when(trackerService.getTracker(FILE_KEY)).thenReturn(tracker);
 
-        // Assert
-        assertNotNull(result);
-        assertEquals(expectedRecords, result);
-        verify(sfmcRawRecordRepository).findTopByFileKeyAndStatusAndIdGreaterThan(
-            FILE_KEY, RawRecordStatus.PENDING, lastProcessedId, expectedPageable
-        );
+            // Act
+            ApiResponse response = templatedBatchEmailService.processTemplatedBatchEmails(dto);
+
+            // Assert
+            assertNotNull(response);
+            assertEquals(REQUEST_ID, response.getId());
+            assertEquals("Task is in progress or already processed", response.getMarTechResponse().get("message"));
+            assertEquals("Not Queued", response.getMarTechResponse().get("status"));
+            
+            verify(trackerService, never()).updateEmailProcessStatus(any(), anyString());
+            verify(processEmailTaskExecutor, never()).execute(any(Runnable.class));
+        }
     }
 }
