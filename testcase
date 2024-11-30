@@ -159,241 +159,54 @@ describe('CreditcardUtilityService', () => {
     });
 });
 
-package com.ymca.prs0.tbp.service.impl;
+@Test
+void processTemplatedBatch_WhenFailedChunksExist_ShouldProcessFailedChunks() {
+    // Arrange
+    TemplatedBatchDTO dto = new TemplatedBatchDTO();
+    dto.setFileKey(FILE_KEY);
+    
+    RequestInfo requestInfo = RequestInfo.builder()
+        .requestId(REQUEST_ID)
+        .build();
 
-import com.ymca.prs0.tbp.exception.InvalidInputException;
-import com.ymca.prs0.tbp.model.*;
-import com.ymca.prs0.tbp.model.document.Tracker;
-import com.ymca.prs0.tbp.model.dto.TemplatedBatchDTO;
-import com.ymca.prs0.tbp.processor.TemplatedBatchProcessor;
-import com.ymca.prs0.tbp.repository.HeaderContentRepository;
-import com.ymca.prs0.tbp.service.*;
-import com.ymca.prs0.tbp.util.RequestInfoHolder;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockedStatic;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.core.task.TaskExecutor;
-import org.springframework.test.util.ReflectionTestUtils;
-
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
-
-@ExtendWith(MockitoExtension.class)
-class TemplatedBatchServiceImplTest {
-
-    @Mock
-    private S3Service s3Service;
-
-    @Mock
-    private SMBService smbService;
-
-    @Mock
-    private TrackerService trackerService;
-
-    @Mock
-    private ProcessingEventService processingEventService;
-
-    @Mock
-    private TemplatedBatchProcessor templatedBatchProcessor;
-
-    @Mock
-    private HeaderContentRepository headerContentRepository;
-
-    @Mock
-    private TaskExecutor processBatchTaskExecutor;
-
-    @Mock
-    private MessageRawRecordService messageRawRecordService;
-
-    @Mock
-    private EmailRawRecordService emailRawRecordService;
-
-    @InjectMocks
-    private TemplatedBatchServiceImpl templatedBatchService;
-
-    private static final String FILE_KEY = "test-file-key";
-    private static final String REQUEST_ID = "test-request-id";
-    private static final long PART_SIZE = 52428800L; // 50MB
-    private static final String ARCHIVE_DIRECTORY = "/archive/dir";
-
-    @BeforeEach
-    void setUp() {
-        ReflectionTestUtils.setField(templatedBatchService, "partSize", PART_SIZE);
-        ReflectionTestUtils.setField(templatedBatchService, "archiveDirectory", ARCHIVE_DIRECTORY);
-    }
-
-    @Test
-    void processTemplatedBatch_WhenFileNotFound_ShouldThrowException() {
-        // Arrange
-        TemplatedBatchDTO dto = new TemplatedBatchDTO();
-        dto.setFileKey(FILE_KEY);
+    try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
+        requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
         
-        RequestInfo requestInfo = RequestInfo.builder()
-            .requestId(REQUEST_ID)
-            .build();
-
-        try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
-            requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
-            when(s3Service.pollFiles()).thenReturn(Collections.emptyList());
-
-            // Act & Assert
-            assertThrows(InvalidInputException.class, () -> 
-                templatedBatchService.processTemplatedBatch(dto));
-        }
-    }
-
-    @Test
-    void processTemplatedBatch_WhenNewFileAndLocked_ShouldSubmitJob() {
-        // Arrange
-        TemplatedBatchDTO dto = new TemplatedBatchDTO();
-        dto.setFileKey(FILE_KEY);
+        // Mock S3Service to return our file key
+        List<String> fileKeys = Arrays.asList(FILE_KEY);
+        when(s3Service.pollFiles()).thenReturn(fileKeys);
         
-        RequestInfo requestInfo = RequestInfo.builder()
-            .requestId(REQUEST_ID)
-            .build();
-
-        try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
-            requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
-            
-            when(s3Service.pollFiles()).thenReturn(Arrays.asList(FILE_KEY));
-            when(trackerService.isNewFile(FILE_KEY)).thenReturn(true);
-            when(trackerService.isFileLocked(FILE_KEY)).thenReturn(true);
-
-            // Act
-            ApiResponse response = templatedBatchService.processTemplatedBatch(dto);
-
-            // Assert
-            assertNotNull(response);
-            assertEquals(REQUEST_ID, response.getId());
-            assertEquals("Task Submitted", response.getMarTechResponse().get("message"));
-            assertEquals("Queued", response.getMarTechResponse().get("status"));
-            
-            verify(processBatchTaskExecutor).execute(any(Runnable.class));
-        }
-    }
-
-    @Test
-    void processNewFile_WhenValidContentLength_ShouldProcessFile() {
-        // Arrange
-        long contentLength = 1000L;
-        when(s3Service.getS3ObjectContentLength(FILE_KEY)).thenReturn(contentLength);
-        when(trackerService.createTrackerAndLockFile(any(Tracker.class))).thenReturn(true);
-
-        // Act
-        templatedBatchService.processNewFile(FILE_KEY);
-
-        // Assert
-        verify(processBatchTaskExecutor).execute(any(Runnable.class));
-        verify(trackerService).createTrackerAndLockFile(argThat(tracker -> 
-            tracker.getFileKey().equals(FILE_KEY) &&
-            tracker.getStatus() == S3ObjectStatus.INPROGRESS &&
-            tracker.getTotalContentlength() == contentLength &&
-            tracker.getMcProcessStatus() == MCProcessStatus.PENDING &&
-            tracker.getEmailProcessStatus() == EmailProcessStatus.PENDING
-        ));
-    }
-
-    @Test
-    void reProcessFile_WhenValidContentLength_ShouldReprocessFile() {
-        // Arrange
-        long contentLength = 1000L;
-        when(s3Service.getS3ObjectContentLength(FILE_KEY)).thenReturn(contentLength);
+        // Set up the chain of conditions that leads to processing failed chunks
+        when(trackerService.isNewFile(FILE_KEY)).thenReturn(false);
+        when(trackerService.isFileInProgressOrProcessed(FILE_KEY)).thenReturn(true);
+        when(trackerService.isFileAlreadyFailed(FILE_KEY)).thenReturn(false);
+        when(trackerService.isFileInterrupted(FILE_KEY)).thenReturn(false);
+        when(trackerService.isFileLocked(FILE_KEY)).thenReturn(false);
+        when(processingEventService.isFailedChunksExist(FILE_KEY)).thenReturn(true);
         when(trackerService.lockFile(FILE_KEY)).thenReturn(true);
 
+        // Create a captured runnable to verify it's being executed
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+        doNothing().when(processBatchTaskExecutor).execute(runnableCaptor.capture());
+
         // Act
-        templatedBatchService.reProcessFile(FILE_KEY);
+        ApiResponse response = templatedBatchService.processTemplatedBatch(dto);
 
         // Assert
         verify(processBatchTaskExecutor).execute(any(Runnable.class));
-    }
+        assertNotNull(response);
+        assertEquals(REQUEST_ID, response.getId());
+        assertEquals("Task Submitted", response.getMarTechResponse().get("message"));
+        assertEquals("Queued", response.getMarTechResponse().get("status"));
 
-    @Test
-    void deleteAll_ShouldDeleteAllRelatedRecords() {
-        // Act
-        templatedBatchService.deleteAll(FILE_KEY);
-
-        // Assert
-        verify(processingEventService).deleteAll(FILE_KEY);
-        verify(emailRawRecordService).deleteAll(FILE_KEY);
-        verify(messageRawRecordService).deleteAll(FILE_KEY);
-    }
-
-    @Test
-    void processTemplatedBatch_WhenFileInterrupted_ShouldReprocessFile() {
-        // Arrange
-        TemplatedBatchDTO dto = new TemplatedBatchDTO();
-        dto.setFileKey(FILE_KEY);
-        
-        RequestInfo requestInfo = RequestInfo.builder()
-            .requestId(REQUEST_ID)
-            .build();
-
-        try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
-            requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
-            
-            when(s3Service.pollFiles()).thenReturn(Arrays.asList(FILE_KEY));
-            when(trackerService.isNewFile(FILE_KEY)).thenReturn(false);
-            when(trackerService.isFileInProgressOrProcessed(FILE_KEY)).thenReturn(true);
-            when(trackerService.isFileAlreadyFailed(FILE_KEY)).thenReturn(false);
-            when(trackerService.isFileInterrupted(FILE_KEY)).thenReturn(true);
-            when(trackerService.lockFile(FILE_KEY)).thenReturn(true);
-
-            // Act
-            ApiResponse response = templatedBatchService.processTemplatedBatch(dto);
-
-            // Assert
-            assertNotNull(response);
-            assertEquals(REQUEST_ID, response.getId());
-            assertEquals("Task Submitted", response.getMarTechResponse().get("message"));
-            assertEquals("Queued", response.getMarTechResponse().get("status"));
-            
-            verify(processBatchTaskExecutor).execute(any(Runnable.class));
-        }
-    }
-
-    @Test
-    void processTemplatedBatch_WhenFailedChunksExist_ShouldProcessFailedChunks() {
-        // Arrange
-        TemplatedBatchDTO dto = new TemplatedBatchDTO();
-        dto.setFileKey(FILE_KEY);
-        
-        RequestInfo requestInfo = RequestInfo.builder()
-            .requestId(REQUEST_ID)
-            .build();
-
-        try (MockedStatic<RequestInfoHolder> requestInfoHolder = mockStatic(RequestInfoHolder.class)) {
-            requestInfoHolder.when(RequestInfoHolder::getRequestInfo).thenReturn(requestInfo);
-            
-            when(s3Service.pollFiles()).thenReturn(Arrays.asList(FILE_KEY));
-            when(trackerService.isNewFile(FILE_KEY)).thenReturn(false);
-            when(trackerService.isFileInProgressOrProcessed(FILE_KEY)).thenReturn(true);
-            when(trackerService.isFileAlreadyFailed(FILE_KEY)).thenReturn(false);
-            when(trackerService.isFileInterrupted(FILE_KEY)).thenReturn(false);
-            when(trackerService.isFileLocked(FILE_KEY)).thenReturn(false);
-            when(processingEventService.isFailedChunksExist(FILE_KEY)).thenReturn(true);
-            when(trackerService.lockFile(FILE_KEY)).thenReturn(true);
-
-            // Act
-            ApiResponse response = templatedBatchService.processTemplatedBatch(dto);
-
-            // Assert
-            assertNotNull(response);
-            assertEquals(REQUEST_ID, response.getId());
-            assertEquals("Task Submitted", response.getMarTechResponse().get("message"));
-            assertEquals("Queued", response.getMarTechResponse().get("status"));
-            
-            verify(processBatchTaskExecutor).execute(any(Runnable.class));
-        }
+        // Verify all the conditions were checked in the correct order
+        InOrder inOrder = inOrder(trackerService, processingEventService);
+        inOrder.verify(trackerService).isNewFile(FILE_KEY);
+        inOrder.verify(trackerService).isFileInProgressOrProcessed(FILE_KEY);
+        inOrder.verify(trackerService).isFileAlreadyFailed(FILE_KEY);
+        inOrder.verify(trackerService).isFileInterrupted(FILE_KEY);
+        inOrder.verify(trackerService).isFileLocked(FILE_KEY);
+        inOrder.verify(processingEventService).isFailedChunksExist(FILE_KEY);
+        inOrder.verify(trackerService).lockFile(FILE_KEY);
     }
 }
