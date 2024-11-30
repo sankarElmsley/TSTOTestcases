@@ -161,155 +161,206 @@ describe('CreditcardUtilityService', () => {
 
 package com.ymca.prs0.tbp.service.impl;
 
+import com.hierynomus.msdtyp.AccessMask;
+import com.hierynomus.mssmb2.SMB2CreateDisposition;
+import com.hierynomus.mssmb2.SMB2ShareAccess;
+import com.hierynomus.smbj.share.File;
+import com.hierynomus.smbj.session.Session;
+import com.hierynomus.smbj.share.DiskShare;
+import com.ymca.prs0.tbp.exception.TemplatedBatchException;
+import com.ymca.prs0.tbp.factory.SMBConnectionFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-import software.amazon.awssdk.core.ResponseInputStream;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.*;
 
-import java.io.ByteArrayInputStream;
-import java.util.Arrays;
-import java.util.List;
-import java.util.function.Consumer;
+import java.io.IOException;
+import java.util.EnumSet;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class S3ServiceImplTest {
+class SMBServiceImplTest {
 
     @Mock
-    private S3Client s3Client;
+    private SMBConnectionFactory smbConnectionFactory;
+
+    @Mock
+    private Session session;
+
+    @Mock
+    private DiskShare diskShare;
+
+    @Mock
+    private File smbFile;
 
     @InjectMocks
-    private S3ServiceImpl s3Service;
+    private SMBServiceImpl smbService;
 
-    private static final String BUCKET = "test-bucket";
+    private static final String SHARE_NAME = "test-share";
     private static final String FILE_POLL_LOCATION = "test/location/";
-    private static final String TEST_FILE_KEY = "test-file.dat";
-    private static final String TEST_FILE_PATH = FILE_POLL_LOCATION + TEST_FILE_KEY;
+    private static final String TEST_FILE_NAME = "test-file.dat";
+    private static final String NEW_FILE_NAME = "new-test-file.dat";
 
     @BeforeEach
-    void setUp() {
-        ReflectionTestUtils.setField(s3Service, "bucket", BUCKET);
-        ReflectionTestUtils.setField(s3Service, "filePollLocation", FILE_POLL_LOCATION);
+    void setUp() throws IOException {
+        ReflectionTestUtils.setField(smbService, "shareName", SHARE_NAME);
+        ReflectionTestUtils.setField(smbService, "filePollLocation", FILE_POLL_LOCATION);
+
+        when(smbConnectionFactory.createSession()).thenReturn(session);
+        when(session.connectShare(SHARE_NAME)).thenReturn(diskShare);
     }
 
     @Test
-    void pollFiles_ShouldReturnDatFiles() {
+    void rename_ShouldRenameFileSuccessfully() throws IOException {
         // Arrange
-        S3Object validFile1 = S3Object.builder()
-                .key(FILE_POLL_LOCATION + "file1.dat")
-                .build();
-        S3Object validFile2 = S3Object.builder()
-                .key(FILE_POLL_LOCATION + "file2.DAT")
-                .build();
-        S3Object invalidFile = S3Object.builder()
-                .key(FILE_POLL_LOCATION + "file3.txt")
-                .build();
-
-        ListObjectsV2Response listResponse = ListObjectsV2Response.builder()
-                .contents(Arrays.asList(validFile1, validFile2, invalidFile))
-                .build();
-
-        when(s3Client.listObjectsV2(any(ListObjectsV2Request.class)))
-                .thenReturn(listResponse);
+        when(diskShare.openFile(
+            eq(TEST_FILE_NAME),
+            any(EnumSet.class),
+            any(),
+            eq(SMB2ShareAccess.ALL),
+            eq(SMB2CreateDisposition.FILE_OPEN),
+            any()
+        )).thenReturn(smbFile);
+        doNothing().when(smbFile).rename(NEW_FILE_NAME, true);
 
         // Act
-        List<String> result = s3Service.pollFiles();
+        smbService.rename(TEST_FILE_NAME, NEW_FILE_NAME);
 
         // Assert
-        assertEquals(2, result.size());
-        assertTrue(result.contains("file1.dat"));
-        assertTrue(result.contains("file2.DAT"));
-        assertFalse(result.contains("file3.txt"));
-        
-        verify(s3Client).listObjectsV2(any(ListObjectsV2Request.class));
+        verify(diskShare).openFile(
+            eq(TEST_FILE_NAME),
+            any(EnumSet.class),
+            any(),
+            eq(SMB2ShareAccess.ALL),
+            eq(SMB2CreateDisposition.FILE_OPEN),
+            any()
+        );
+        verify(smbFile).rename(NEW_FILE_NAME, true);
+        verify(session).close();
+        verify(diskShare).close();
     }
 
     @Test
-    void readS3FileKey_ShouldReturnInputStream() {
+    void rename_WhenIOExceptionOccurs_ShouldThrowTemplatedBatchException() throws IOException {
         // Arrange
-        byte[] testData = "test data".getBytes();
-        ByteArrayInputStream inputStream = new ByteArrayInputStream(testData);
-        ResponseInputStream<GetObjectResponse> responseInputStream = 
-            new ResponseInputStream<>(GetObjectResponse.builder().build(), inputStream);
-
-        when(s3Client.getObject(any(GetObjectRequest.class)))
-                .thenReturn(responseInputStream);
-
-        // Act
-        ResponseInputStream<GetObjectResponse> result = s3Service.readS3FileKey(TEST_FILE_KEY);
-
-        // Assert
-        assertNotNull(result);
-        verify(s3Client).getObject(any(GetObjectRequest.class));
-    }
-
-    @Test
-    void readS3FileKeyPart_ShouldReturnPartialInputStream() {
-        // Arrange
-        long startPos = 0L;
-        long endPos = 100L;
-        byte[] testData = "partial test data".getBytes();
-        ByteArrayInputStream inputStream = new ByteArrayInputStream(testData);
-        ResponseInputStream<GetObjectResponse> responseInputStream = 
-            new ResponseInputStream<>(GetObjectResponse.builder().build(), inputStream);
-
-        ArgumentCaptor<GetObjectRequest> requestCaptor = ArgumentCaptor.forClass(GetObjectRequest.class);
-        
-        when(s3Client.getObject(any(GetObjectRequest.class)))
-                .thenReturn(responseInputStream);
-
-        // Act
-        ResponseInputStream<GetObjectResponse> result = 
-            s3Service.readS3FileKeyPart(TEST_FILE_KEY, startPos, endPos);
-
-        // Assert
-        assertNotNull(result);
-        verify(s3Client).getObject(requestCaptor.capture());
-        GetObjectRequest capturedRequest = requestCaptor.getValue();
-        assertEquals("bytes=" + startPos + "-" + endPos, capturedRequest.range());
-        assertEquals(BUCKET, capturedRequest.bucket());
-        assertEquals(FILE_POLL_LOCATION + TEST_FILE_KEY, capturedRequest.key());
-    }
-
-    @Test
-    void getS3ObjectContentLength_ShouldReturnLength() {
-        // Arrange
-        long expectedLength = 1000L;
-        HeadObjectResponse headObjectResponse = HeadObjectResponse.builder()
-                .contentLength(expectedLength)
-                .build();
-
-        when(s3Client.headObject((Consumer<HeadObjectRequest.Builder>) any()))
-                .thenReturn(headObjectResponse);
-
-        // Act
-        long result = s3Service.getS3ObjectContentLength(TEST_FILE_KEY);
-
-        // Assert
-        assertEquals(expectedLength, result);
-        verify(s3Client).headObject((Consumer<HeadObjectRequest.Builder>) any());
-    }
-
-    @Test
-    void getS3ObjectContentLength_WhenHeadObjectFails_ShouldThrowException() {
-        // Arrange
-        when(s3Client.headObject((Consumer<HeadObjectRequest.Builder>) any()))
-                .thenThrow(S3Exception.builder().message("S3 Error").build());
+        when(diskShare.openFile(
+            anyString(),
+            any(EnumSet.class),
+            any(),
+            any(),
+            any(),
+            any()
+        )).thenThrow(new IOException("Test exception"));
 
         // Act & Assert
-        assertThrows(S3Exception.class, () -> 
-            s3Service.getS3ObjectContentLength(TEST_FILE_KEY));
-        
-        verify(s3Client).headObject((Consumer<HeadObjectRequest.Builder>) any());
+        assertThrows(TemplatedBatchException.class, () ->
+            smbService.rename(TEST_FILE_NAME, NEW_FILE_NAME));
+
+        verify(session).close();
+        verify(diskShare).close();
+    }
+
+    @Test
+    void moveFile_ShouldMoveFileSuccessfully() throws IOException {
+        // Arrange
+        String targetLocation = "target/location";
+        when(diskShare.openFile(
+            eq(FILE_POLL_LOCATION + TEST_FILE_NAME),
+            any(EnumSet.class),
+            any(),
+            eq(SMB2ShareAccess.ALL),
+            eq(SMB2CreateDisposition.FILE_OPEN),
+            any()
+        )).thenReturn(smbFile);
+        doNothing().when(smbFile).rename(targetLocation + "/" + NEW_FILE_NAME, true);
+
+        // Act
+        smbService.moveFile(TEST_FILE_NAME, NEW_FILE_NAME, targetLocation);
+
+        // Assert
+        verify(diskShare).openFile(
+            eq(FILE_POLL_LOCATION + TEST_FILE_NAME),
+            any(EnumSet.class),
+            any(),
+            eq(SMB2ShareAccess.ALL),
+            eq(SMB2CreateDisposition.FILE_OPEN),
+            any()
+        );
+        verify(smbFile).rename(targetLocation + "/" + NEW_FILE_NAME, true);
+        verify(session).close();
+        verify(diskShare).close();
+    }
+
+    @Test
+    void moveFile_WithNullNewName_ShouldUseOriginalName() throws IOException {
+        // Arrange
+        String targetLocation = "target/location";
+        when(diskShare.openFile(
+            eq(FILE_POLL_LOCATION + TEST_FILE_NAME),
+            any(EnumSet.class),
+            any(),
+            eq(SMB2ShareAccess.ALL),
+            eq(SMB2CreateDisposition.FILE_OPEN),
+            any()
+        )).thenReturn(smbFile);
+        doNothing().when(smbFile).rename(targetLocation + "/" + TEST_FILE_NAME, true);
+
+        // Act
+        smbService.moveFile(TEST_FILE_NAME, null, targetLocation);
+
+        // Assert
+        verify(smbFile).rename(targetLocation + "/" + TEST_FILE_NAME, true);
+    }
+
+    @Test
+    void delete_WhenFileExists_ShouldDeleteSuccessfully() throws IOException {
+        // Arrange
+        when(diskShare.fileExists(TEST_FILE_NAME)).thenReturn(true);
+        doNothing().when(diskShare).rm(TEST_FILE_NAME);
+
+        // Act
+        smbService.delete(TEST_FILE_NAME);
+
+        // Assert
+        verify(diskShare).fileExists(TEST_FILE_NAME);
+        verify(diskShare).rm(TEST_FILE_NAME);
+        verify(session).close();
+        verify(diskShare).close();
+    }
+
+    @Test
+    void delete_WhenFileDoesNotExist_ShouldNotAttemptDelete() throws IOException {
+        // Arrange
+        when(diskShare.fileExists(TEST_FILE_NAME)).thenReturn(false);
+
+        // Act
+        smbService.delete(TEST_FILE_NAME);
+
+        // Assert
+        verify(diskShare).fileExists(TEST_FILE_NAME);
+        verify(diskShare, never()).rm(TEST_FILE_NAME);
+        verify(session).close();
+        verify(diskShare).close();
+    }
+
+    @Test
+    void delete_WhenIOExceptionOccurs_ShouldThrowTemplatedBatchException() throws IOException {
+        // Arrange
+        when(diskShare.fileExists(TEST_FILE_NAME)).thenThrow(new IOException("Test exception"));
+
+        // Act & Assert
+        assertThrows(TemplatedBatchException.class, () ->
+            smbService.delete(TEST_FILE_NAME));
+
+        verify(session).close();
+        verify(diskShare).close();
     }
 }
