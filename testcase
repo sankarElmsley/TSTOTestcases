@@ -159,3 +159,78 @@ describe('CreditcardUtilityService', () => {
     });
 });
 
+
+package com.ymca.prs0.tbp.config;
+
+import org.bouncycastle.openpgp.PGPPublicKey;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+@ExtendWith(MockitoExtension.class)
+class KeyConfigTest {
+
+    @InjectMocks
+    private KeyConfig keyConfig;
+
+    private static final String VALID_PUBLIC_KEY = """
+        -----BEGIN PGP PUBLIC KEY BLOCK-----
+        
+        mQINBGXMugwBEADJhw9VMU4yaxolzDRz4XiP+0tOvP3RI8pOBgP6Jx6N8Xv07YCJ
+        AoCwLGVFA5q8BNW5UQNBw/lOvR4oal5UFOTzPT3cKDw6jZ7OQnL2RH0pkPtGVVl0
+        H2JzuXx4p9w5wFBzAjIZRD0o4m8dGqOTxEqKI8uL3oPnfwp8ETmb
+        =YyXV
+        -----END PGP PUBLIC KEY BLOCK-----
+        """;
+
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(keyConfig, "sftpPublicKey", VALID_PUBLIC_KEY);
+    }
+
+    @Test
+    void init_ShouldInitializePublicKey() throws Exception {
+        // Act
+        keyConfig.init();
+
+        // Assert
+        assertNotNull(KeyConfig.getPublicKey(), "Public key should be initialized");
+    }
+
+    @Test
+    void loadPublicKey_WithValidKey_ShouldReturnPGPPublicKey() throws Exception {
+        // Act
+        PGPPublicKey result = keyConfig.loadPublicKey();
+
+        // Assert
+        assertNotNull(result, "Should return a valid PGPPublicKey");
+        assertTrue(result.isEncryptionKey(), "Should be an encryption key");
+        assertTrue(result.isMasterKey(), "Should be a master key");
+    }
+
+    @Test
+    void loadPublicKey_WithInvalidKey_ShouldThrowException() {
+        // Arrange
+        ReflectionTestUtils.setField(keyConfig, "sftpPublicKey", "invalid-key-data");
+
+        // Act & Assert
+        assertThrows(Exception.class, () -> keyConfig.loadPublicKey(),
+            "Should throw exception for invalid key data");
+    }
+
+    @Test
+    void loadPublicKey_WithEmptyKey_ShouldThrowException() {
+        // Arrange
+        ReflectionTestUtils.setField(keyConfig, "sftpPublicKey", "");
+
+        // Act & Assert
+        assertThrows(Exception.class, () -> keyConfig.loadPublicKey(),
+            "Should throw exception for empty key");
+    }
+}
+
