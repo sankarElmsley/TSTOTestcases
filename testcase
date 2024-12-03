@@ -240,3 +240,180 @@ class AppConfigTest {
         assertNotNull(smbClient.getConfig().getDialects(), "SMB dialects should be configured");
     }
 }
+
+
+
+package com.ymca.prs0.tbp.config;
+
+import com.ymca.prs0.tbp.model.document.MessageTemplateNotification;
+import com.ymca.prs0.tbp.repository.MessageTemplateNotificationRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.mongodb.MongoDatabaseFactory;
+import org.springframework.data.mongodb.MongoTransactionManager;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class DBConfigTest {
+
+    @Mock
+    private MessageTemplateNotificationRepository messageTemplateNotificationRepository;
+
+    @Mock
+    private MongoDatabaseFactory mongoDatabaseFactory;
+
+    @InjectMocks
+    private DBConfig dbConfig;
+
+    private MessageTemplateNotification template1;
+    private MessageTemplateNotification template2;
+
+    @BeforeEach
+    void setUp() {
+        // Initialize test data
+        template1 = new MessageTemplateNotification();
+        template1.setNotificationId("notification1");
+        template1.setTemplateId("template1");
+
+        template2 = new MessageTemplateNotification();
+        template2.setNotificationId("notification2");
+        template2.setTemplateId("template2");
+
+        // Clear static map before each test
+        DBConfig.getMessageTemplateNotificationMap().clear();
+    }
+
+    @Test
+    void transactionManager_ShouldCreateValidManager() {
+        // Act
+        MongoTransactionManager transactionManager = dbConfig.transactionManager(mongoDatabaseFactory);
+
+        // Assert
+        assertNotNull(transactionManager, "Transaction manager should not be null");
+    }
+
+    @Test
+    void loadData_WhenTemplatesExist_ShouldLoadIntoMap() {
+        // Arrange
+        when(messageTemplateNotificationRepository.findAll())
+            .thenReturn(Arrays.asList(template1, template2));
+
+        // Act
+        dbConfig.loadData();
+
+        // Assert
+        Map<String, MessageTemplateNotification> resultMap = DBConfig.getMessageTemplateNotificationMap();
+        assertEquals(2, resultMap.size(), "Map should contain 2 templates");
+        assertEquals(template1, resultMap.get("notification1"), "Should contain first template");
+        assertEquals(template2, resultMap.get("notification2"), "Should contain second template");
+        verify(messageTemplateNotificationRepository).findAll();
+    }
+
+    @Test
+    void loadData_WhenNoTemplates_ShouldHaveEmptyMap() {
+        // Arrange
+        when(messageTemplateNotificationRepository.findAll())
+            .thenReturn(Collections.emptyList());
+
+        // Act
+        dbConfig.loadData();
+
+        // Assert
+        Map<String, MessageTemplateNotification> resultMap = DBConfig.getMessageTemplateNotificationMap();
+        assertTrue(resultMap.isEmpty(), "Map should be empty");
+        verify(messageTemplateNotificationRepository).findAll();
+    }
+
+    @Test
+    void getMessageTemplateByNotificationId_WhenTemplateExists_ShouldReturnTemplate() {
+        // Arrange
+        when(messageTemplateNotificationRepository.findAll())
+            .thenReturn(Collections.singletonList(template1));
+        dbConfig.loadData();
+
+        // Act
+        MessageTemplateNotification result = DBConfig.getMessageTemplateByNotificationId("notification1");
+
+        // Assert
+        assertNotNull(result, "Should return template for existing notification ID");
+        assertEquals(template1, result, "Should return correct template");
+    }
+
+    @Test
+    void getMessageTemplateByNotificationId_WhenTemplateNotExists_ShouldReturnNull() {
+        // Arrange
+        when(messageTemplateNotificationRepository.findAll())
+            .thenReturn(Collections.emptyList());
+        dbConfig.loadData();
+
+        // Act
+        MessageTemplateNotification result = DBConfig.getMessageTemplateByNotificationId("nonexistent");
+
+        // Assert
+        assertNull(result, "Should return null for non-existent notification ID");
+    }
+
+    @Test
+    void loadData_WhenRepositoryThrowsException_ShouldHandleGracefully() {
+        // Arrange
+        when(messageTemplateNotificationRepository.findAll())
+            .thenThrow(new RuntimeException("Database error"));
+
+        // Act & Assert
+        assertThrows(RuntimeException.class, () -> dbConfig.loadData());
+        assertTrue(DBConfig.getMessageTemplateNotificationMap().isEmpty(), 
+            "Map should remain empty when loading fails");
+    }
+
+    @Test
+    void loadData_ShouldUpdateExistingTemplates() {
+        // Arrange
+        MessageTemplateNotification updatedTemplate = new MessageTemplateNotification();
+        updatedTemplate.setNotificationId("notification1");
+        updatedTemplate.setTemplateId("updatedTemplate1");
+
+        // First load
+        when(messageTemplateNotificationRepository.findAll())
+            .thenReturn(Collections.singletonList(template1));
+        dbConfig.loadData();
+
+        // Second load with updated template
+        when(messageTemplateNotificationRepository.findAll())
+            .thenReturn(Collections.singletonList(updatedTemplate));
+        dbConfig.loadData();
+
+        // Assert
+        Map<String, MessageTemplateNotification> resultMap = DBConfig.getMessageTemplateNotificationMap();
+        assertEquals(1, resultMap.size(), "Map should contain 1 template");
+        assertEquals(updatedTemplate, resultMap.get("notification1"), 
+            "Should contain updated template");
+        assertEquals("updatedTemplate1", resultMap.get("notification1").getTemplateId(), 
+            "Template should be updated");
+    }
+
+    @Test
+    void getMessageTemplateNotificationMap_ShouldReturnUnmodifiableMap() {
+        // Arrange
+        when(messageTemplateNotificationRepository.findAll())
+            .thenReturn(Collections.singletonList(template1));
+        dbConfig.loadData();
+
+        // Act
+        Map<String, MessageTemplateNotification> resultMap = DBConfig.getMessageTemplateNotificationMap();
+
+        // Assert
+        assertThrows(UnsupportedOperationException.class, () -> 
+            resultMap.put("newKey", template2),
+            "Map should not allow direct modifications");
+    }
+}
