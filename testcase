@@ -161,3 +161,170 @@ describe('CreditcardUtilityService', () => {
 
 
 
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.powermock.api.mockito2.PowerMockito;
+import org.powermock.core.classloader.annotations.PrepareForTest;
+import org.powermock.modules.junit4.PowerMockRunner;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import static org.junit.Assert.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
+
+@RunWith(PowerMockRunner.class)
+@PrepareForTest({DadDAO.class, CSUtil.class})
+public class LastDownloadDateServiceTest {
+
+    private LastDownloadDateService service;
+
+    @Mock
+    private LastDownloadDateRequestDTO request;
+
+    @Mock
+    private CustomerContextBean customerContext;
+
+    @Mock
+    private CustomerContextModel customerContextModel;
+
+    @Mock
+    private CreditCardAccountBean creditCardBean;
+
+    @Mock
+    private CreditCardAccount creditCardAccount;
+
+    private List<CreditCardAccountBean> creditCardList;
+
+    @Before
+    public void setUp() {
+        service = new LastDownloadDateService();
+        creditCardList = new ArrayList<>();
+        PowerMockito.mockStatic(DadDAO.class);
+        PowerMockito.mockStatic(CSUtil.class);
+
+        // Set up common mock behaviors
+        when(customerContext.getModel()).thenReturn(customerContextModel);
+        when(creditCardBean.getCreditCardAccount()).thenReturn(creditCardAccount);
+        when(creditCardAccount.getAccountNumber()).thenReturn("1234-5678-9012-3456");
+    }
+
+    @Test
+    public void testLastDownloadDate_Success() throws Exception {
+        // Arrange
+        String accountIndex = "0";
+        Date expectedDate = new Date();
+        creditCardList.add(creditCardBean);
+
+        when(request.getAccountIndex()).thenReturn(accountIndex);
+        when(customerContextModel.getAccounts(AccountListSpecifier.CREDIT_CARD_ACCOUNTS_FILTERED_FOR_BOS_SERVICES))
+                .thenReturn(creditCardList);
+        PowerMockito.when(DadDAO.getLastDownloadDate(anyString())).thenReturn(expectedDate);
+
+        // Act
+        LastDownloadDateResponseDTO response = service.lastDownloadDate(request, customerContext);
+
+        // Assert
+        assertNotNull(response);
+        assertEquals(expectedDate, response.getLastDownloadDate());
+    }
+
+    @Test(expected = ServiceErrorException.class)
+    public void testLastDownloadDate_NullRequest() throws ServiceErrorException {
+        service.lastDownloadDate(null, customerContext);
+    }
+
+    @Test(expected = ServiceErrorException.class)
+    public void testLastDownloadDate_NullCustomerContext() throws ServiceErrorException {
+        service.lastDownloadDate(request, null);
+    }
+
+    @Test(expected = ServiceErrorException.class)
+    public void testLastDownloadDate_InvalidAccountIndex() throws ServiceErrorException {
+        // Arrange
+        when(request.getAccountIndex()).thenReturn("invalid");
+        PowerMockito.doThrow(new ServiceErrorException(ERROR_CODE_600))
+                .when(CSUtil.class);
+        CSUtil.handleError(ERROR_CODE_600);
+
+        // Act
+        service.lastDownloadDate(request, customerContext);
+    }
+
+    @Test(expected = ServiceErrorException.class)
+    public void testLastDownloadDate_EmptyCreditCardList() throws ServiceErrorException {
+        // Arrange
+        when(request.getAccountIndex()).thenReturn("0");
+        when(customerContextModel.getAccounts(AccountListSpecifier.CREDIT_CARD_ACCOUNTS_FILTERED_FOR_BOS_SERVICES))
+                .thenReturn(new ArrayList<>());
+        PowerMockito.doThrow(new ServiceErrorException(ERROR_CODE_600))
+                .when(CSUtil.class);
+        CSUtil.handleError(ERROR_CODE_600);
+
+        // Act
+        service.lastDownloadDate(request, customerContext);
+    }
+
+    @Test(expected = ServiceErrorException.class)
+    public void testLastDownloadDate_NullCreditCardAccount() throws ServiceErrorException {
+        // Arrange
+        when(request.getAccountIndex()).thenReturn("0");
+        creditCardList.add(creditCardBean);
+        when(creditCardBean.getCreditCardAccount()).thenReturn(null);
+        when(customerContextModel.getAccounts(AccountListSpecifier.CREDIT_CARD_ACCOUNTS_FILTERED_FOR_BOS_SERVICES))
+                .thenReturn(creditCardList);
+        PowerMockito.doThrow(new ServiceErrorException(ERROR_CODE_600))
+                .when(CSUtil.class);
+        CSUtil.handleError(ERROR_CODE_600);
+
+        // Act
+        service.lastDownloadDate(request, customerContext);
+    }
+
+    @Test(expected = ServiceErrorException.class)
+    public void testLastDownloadDate_DAOException() throws Exception {
+        // Arrange
+        String accountIndex = "0";
+        creditCardList.add(creditCardBean);
+
+        when(request.getAccountIndex()).thenReturn(accountIndex);
+        when(customerContextModel.getAccounts(AccountListSpecifier.CREDIT_CARD_ACCOUNTS_FILTERED_FOR_BOS_SERVICES))
+                .thenReturn(creditCardList);
+        PowerMockito.when(DadDAO.getLastDownloadDate(anyString())).thenThrow(new Exception("DAO Error"));
+        PowerMockito.doThrow(new ServiceErrorException(LAST_DOWNLOAD_DATE_ERROR))
+                .when(CSUtil.class);
+        CSUtil.handleError(LAST_DOWNLOAD_DATE_ERROR);
+
+        // Act
+        service.lastDownloadDate(request, customerContext);
+    }
+
+    @Test
+    public void testLastDownloadDate_AccountNumberSanitization() throws Exception {
+        // Arrange
+        String accountIndex = "0";
+        Date expectedDate = new Date();
+        creditCardList.add(creditCardBean);
+        String dirtyAccountNumber = "1234-5678 9012-3456";
+        String cleanAccountNumber = "1234567890123456";
+
+        when(request.getAccountIndex()).thenReturn(accountIndex);
+        when(customerContextModel.getAccounts(AccountListSpecifier.CREDIT_CARD_ACCOUNTS_FILTERED_FOR_BOS_SERVICES))
+                .thenReturn(creditCardList);
+        when(creditCardAccount.getAccountNumber()).thenReturn(dirtyAccountNumber);
+        PowerMockito.when(DadDAO.getLastDownloadDate(cleanAccountNumber)).thenReturn(expectedDate);
+
+        // Act
+        LastDownloadDateResponseDTO response = service.lastDownloadDate(request, customerContext);
+
+        // Assert
+        assertNotNull(response);
+        assertEquals(expectedDate, response.getLastDownloadDate());
+    }
+}
+
+
