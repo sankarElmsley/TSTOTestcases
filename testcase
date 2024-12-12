@@ -161,3 +161,255 @@ describe('CreditcardUtilityService', () => {
 
 
 
+Parse line-by-line with following record types:
+1.	Header (H)
+2.	Policy (P)
+3.	Broker (B)
+4.	Insured (I)
+5.	Location (L)
+6.	Trailer (T)
+Policy Information
+1.	Policy Line Number (5 chars)
+2.	Policy Number (16 chars)
+3.	Previous Policy Number (16 chars)
+4.	Effective Date (ddmmyyyy)
+5.	Expiry Date (ddmmyyyy)
+6.	Transaction Effective Date (ddmmyyyy)
+7.	Transaction Type (3 digits)
+8.	Commission Rate (11 digits)
+9.	Term Premium (10 digits)
+10.	Annual Premium (10 digits)
+11.	Deductible (10 digits)
+12.	Limit (10 digits)
+13.	Coverage Type (1 char)
+14.	MLP (3 digits)
+15.	Package Type (3 digits)
+16.	BM Type (10 chars)
+17.	BM Coverage (7 chars)
+Policy Validation
+1.	Must have associated broker information
+2.	Must have insured information
+3.	Must have valid business codes
+4.	Must have non-zero premium for non-endorsement transactions
+5.	Must have valid postal codes for locations
+Transaction Types
+1.	New Business
+2.	Premium Endorsement
+3.	Renewal
+4.	Cancellation
+5.	Lapse
+6.	Reinstatement
+7.	Lapse Reversal
+8.	Quote
+9.	NonPremium Endorsement
+ Special Product Handling
+1.	Homeowners policies
+2.	Cyber coverage products
+3.	HSP/SLC products
+4.	Combined products (DC1, DC3, C1, C3)
+
+Location Types and Processing Rules
+Commercial Location Processing
+1.	Basic Commercial Location Structure
+2.	Location Number (Unique identifier)
+3.	Address Information
+4.	Building Value
+5.	Contents Value
+6.	Business Code
+7.	Coverage Type (LocBMCov)
+8.	Multiple Business Interruption Forms (up to 6)
+
+**Manufacturing Industry Combinations**
+
+Primary Forms:
+ 127: Business Interruption (Gross Earnings Form)
+  Purpose: Covers loss of income due to business interruption
+  Typical Limit: 4050% of annual gross earnings
+  Premium Calculation: Rate × Gross Earnings Limit
+
+ 313: Extra Expense Insurance
+  Purpose: Covers additional costs to continue operations
+  Typical Limit: 2530% of building value
+  Premium Calculation: Rate × Extra Expense Limit
+
+*** Commercial Building Combinations ****
+Primary Forms:
+ 561: Rent or Rental Value Insurance
+  Purpose: Covers loss of rental income
+  Typical Limit: Annual rental value
+  Premium Calculation: Rate × Annual Rental Value
+
+ 126: Business Interruption (Gross Rentals Form)
+  Purpose: Extended rental coverage
+  Typical Limit: 1218 months of rental value
+  Premium Calculation: Rate × Extended Rental Value
+
+ **Retail Business Combinations**
+Primary Forms:
+ 127: Business Interruption (Gross Earnings)
+  Purpose: Income loss coverage
+  Typical Limit: 4050% of annual sales
+
+ 185: Contingent Business Interruption (Contributing)
+  Purpose: Covers losses from supplier interruptions
+  Typical Limit: 2025% of gross earnings limit
+
+ 186: Contingent Business Interruption (Recipient)
+  Purpose: Covers losses from customer interruptions
+  Typical Limit: 2025% of gross earnings limit
+
+C. Premium Calculations
+ Base Premium Components
+•	Building Premium = Building Value × Building Rate
+•	Contents Premium = Contents Value × Contents Rate
+•	Each BI Form Premium = BI Limit × Formspecific Rate
+•	Total Location Premium = Building Premium + Contents Premium + Sum of all BI Premiums
+
+ Rate Factors
+•	Building Construction Type
+•	Occupancy Class
+•	Protection Class
+•	Territory
+•	Deductible Credit
+
+Validation Rules for Commercial Locations
+1. **Mandatory Field Validations**
+Required Fields:
+1.	Location Number
+2.	At least one form of address (civic or legal)
+3.	Building Value or Contents Value
+4.	Business Code
+5.	Coverage Type
+2. **Business Interruption Form Validations**
+Rule 1:
+If BI Form exists, must have:
+•	Valid Form Code (from coverageCodes table)
+•	Nonzero BI Limit
+•	Associated Premium
+Rule 2: 
+Maximum Forms per Location:
+•	Standard: Up to 6 different forms
+•	Cannot duplicate form types
+Rule 3: 
+Form Compatibility:
+•	Gross Earnings (127) cannot combine with Profits Form (128)
+•	Rental Value (561) requires building value
+
+Homeowner Location Processing
+A. Coverage Types and Structures
+1. HSP (Home Security Policy)
+Components:
+1.	Building Coverage
+2.	Contents Coverage
+3.	Required Fields:
+4.	HSP Premium
+5.	HSP Commission
+6.	HSP Deductible
+7.	HSP Limit (from policy)
+
+
+
+2.SLC (Service Line Coverage)
+Components:
+ Fixed limit of 10,000
+ Required Fields:
+1.	SLC Premium
+2.	SLC Commission
+3.	SLC Deductible
+3. Combined HSP/SLC
+Requires all fields from both HSP and SLC
+Creates two separate location value records
+# B. Premium Calculations for Homeowner
+1. HSP Premium Calculation
+HSP Premium Components:
+Base Premium = Coverage Amount × Base Rate
+Adjusted Premium = Base Premium × Territory Factor × Construction Factor
+Final Premium = Adjusted Premium  Deductible Credit
+
+2. SLC Premium Calculation
+Fixed Coverage Amount: $10,000
+Standard Premium Rates based on:
+ Territory
+ Property Age
+ Service Line Type
+
+
+
+
+
+ Validation Rules for Homeowner Locations
+ 1. HSP Validations
+Required for HSP:
+1.	Valid postal code
+2.	Property value within acceptable range
+3.	Deductible must match policy level
+4.	Premium must be > $0 if active coverage
+2.  SLC Validations
+Required for SLC:
+1.	Must maintain $10,000 limit
+2.	Valid service line type
+3.	Property age within acceptable range
+4.	Premium must be > $0 if active coverage
+
+3. Common Validation Rules
+ 3.1 Address Validation
+Must have either:
+1. Civic Address:
+•	Street Number
+•	Street Name
+•	City
+•	Province
+•	Postal Code
+OR
+2. Legal Address:
+•	Lot
+•	Block
+•	Plan
+•	Section
+•	Township
+Business Code Validation
+•	Must exist in EDIBUSCOD table
+•	Must match company number
+•	Must be active code
+
+Premium Validation
+For all coverage types:
+1. Premium must be >= 0
+2. If coverage active:
+•	Premium must be > 0
+•	Commission must be valid percentage
+•	Deductible must be valid amount
+3. Premium must match calculation rules
+
+Location Value (EDILOCVAL) Creation Rules
+1)	 Commercial Rules
+•	Create EDILOCVAL record:
+•	For each valid BI form
+•	Maximum 6 records per location
+•	Each must have unique form code
+•	Each must have valid limit and premium
+2)	Homeowner Rules
+•	Create EDILOCVAL record:
+•	One record for HSP if exists
+•	One record for SLC if exists
+•	Two records for combined HSP/SLC
+•	Each must have correct coverage code
+
+
+
+Error Handling
+ 5.1 Business Error Codes
+•	LOC001: Missing mandatory location fields
+•	LOC002: Invalid business code
+•	LOC003: Invalid BI form combination
+•	LOC004: Premium calculation error
+•	LOC005: Invalid address format
+•	LOC006: Duplicate BI forms
+•	LOC007: Invalid coverage combination
+
+ 5.2 Error Resolution Process
+1. Log error in EDILOG table
+2. Set policy status to 'N' for critical errors
+3. Set policy status to 'P' for warnings
+4. Generate error report for business review
+
