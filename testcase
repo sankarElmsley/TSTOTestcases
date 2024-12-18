@@ -63,184 +63,194 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { Bin } from "///src/model/ccu/binRangesResponse";
-import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
-import { AutoCacheResult } from "///common/cache/auto_local_cache";
+# BMO Consent Management System API Documentation
 
-// Create mock for fetch
-const mockFetchImplementation = jest.fn();
-jest.mock('node-fetch', () => ({
-  __esModule: true,
-  default: (...args: any[]) => mockFetchImplementation(...args)
-}));
+## 1. Get Processing Purpose API
+Used to retrieve consent purpose details and scope information for a specific vendor.
 
-// Mock the logger
-jest.mock("///common/utils/logger", () => ({
-  debug: jest.fn(),
-  debugWithSanitize: jest.fn(),
-  error: jest.fn(),
-  info: jest.fn(),
-  infoWithSanitize: jest.fn(),
-  trace: jest.fn(),
-  logBackendServiceError: jest.fn(),
-  logBackendServiceRequest: jest.fn(),
-  logBackendServiceResponse: jest.fn(),
-}));
+### Endpoint
+```
+POST /identityManagement/consent/v1/consentcontent
+```
 
-// Mock CrossAccountAPICache
-const mockGetValue = jest.fn().mockResolvedValue({
-  apiKey: "mock-api-key",
-  apiGatewayId: "mock-gateway-id"
-});
+### Request
+```json
+{
+    "headerVersion": "1",
+    "digitalSignature": "digitalSignature",
+    "timeoutTime": "0",
+    "correlation": {
+        "requestId": "REQ_butahy",
+        "myId": "REQ_butahy_1",
+        "myTimeStamp": "2024-09-24T19:57:08"
+    },
+    "what": {
+        "APIFunction": "getbmoprocessingpurposePost",
+        "API": "bmopartyconsent"
+    },
+    "clientId": "2068c3f44bcb100a1d291f28b5ce5c5a",
+    "scopes": ["readAccoun"]
+}
+```
 
-jest.mock("///common/cross_account/cached_api_information", () => {
-  return {
-    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-      getValue: mockGetValue
-    }))
-  };
-});
-
-// Mock AutoLocalCache and AutoCacheResult
-jest.mock("///common/cache/auto_local_cache", () => {
-  const originalModule = jest.requireActual("///common/cache/auto_local_cache");
-  
-  return {
-    ...originalModule,
-    AutoLocalCache: jest.fn().mockImplementation(function(refreshMethod) {
-      return {
-        get_value: async () => {
-          const result = await refreshMethod();
-          return result;
+### Response
+```json
+{
+    "scopes": [
+        {
+            "processingPurposeId": "561359846174881811",
+            "en": "Bank Account and Credit Card balances, account names, and transaction details",
+            "fr": "Soldes des comptes bancaires et de cartes de crédit, noms des comptes et renseignements sur les transactions",
+            "vendorName": "Intuit Canada ULC"
         }
-      };
-    }),
-    AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
-      value: value,
-      ttl: ttl
-    }))
-  };
-});
+    ]
+}
+```
 
-describe("CreditcardUtilityService Tests", () => {
-  let creditcardUtilityService: CreditcardUtilityService;
-  const mockCorrelationId = "test-correlation-id";
-  
-  beforeEach(() => {
-    // Mock all required environment variables
-    process.env.crossRegion = "us-east-1";
-    process.env.REGION = "us-east-1";
-    process.env.crossAccountRoleForCCU = "arn:aws:iam::123456789012:role/test-role";
-    process.env.ssmParamCcuApiKey = "test-api-key-param";
-    process.env.ssmParamCcuGatewayId = "test-gateway-id-param";
-    process.env.getBinRangesUrl = "https://api.test.com/bin-ranges";
+### Description
+- Retrieves processing purpose details for consent
+- Supports multilingual responses (English/French)
+- Includes vendor information and scope of data access
+- Response time: ~200ms
 
-    // Reset all mocks
-    mockFetchImplementation.mockReset();
-    mockGetValue.mockClear();
-    jest.clearAllMocks();
-  });
+## 2. Get All BMO Party Consents API
+Used to retrieve existing consents before adding a new one.
 
-  afterEach(() => {
-    jest.resetAllMocks();
-    // Clear environment variables
-    delete process.env.crossRegion;
-    delete process.env.REGION;
-    delete process.env.crossAccountRoleForCCU;
-    delete process.env.ssmParamCcuApiKey;
-    delete process.env.ssmParamCcuGatewayId;
-    delete process.env.getBinRangesUrl;
-  });
+### Endpoint
+```
+POST /esbapi/party/bmopartyconsent/v1/getallbmopartyconsents
+```
 
-  describe("getBinRangesCached", () => {
-    it("should successfully retrieve BIN ranges when API returns 200", async () => {
-      const mockBinResponse = {
-        binList: {
-          bin: [
-            {
-              binStart: "400000",
-              binEnd: "499999",
-              cardType: "VISA",
-            },
-          ],
-        },
-      };
+### Request
+```json
+{
+    "headerVersion": "1",
+    "digitalSignature": "digitalSignature",
+    "timeoutTime": "0",
+    "correlation": {
+        "requestId": "REQ_w5nkah",
+        "myId": "REQ_w5nkah_1",
+        "myTimeStamp": "2024-09-24T18:09:32.801"
+    },
+    "what": {
+        "APIFunction": "getallbmopartyconsentsPost",
+        "API": "bmopartyconsent"
+    }
+}
+```
 
-      mockFetchImplementation.mockResolvedValueOnce({
-        status: 200,
-        statusText: "OK",
-        json: () => Promise.resolve(mockBinResponse)
-      });
+### Response
+```json
+{
+    "correlation": {
+        "requestId": "REQ_w5nkah",
+        "myId": "GetA11092414e105c5fe-0a61-465d-a13a-6d56d724ae0b",
+        "myTimeStamp": "2024-09-24T14:09:32.921-04:00",
+        "callPath": "bmopartyconsent/null/GetAllBMOPartyConsents/"
+    },
+    "responseStatus": "0"
+}
+```
 
-      creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
-      const result = await creditcardUtilityService.getBinRangesCached();
+### Description
+- Validates existing consents for the user
+- Used as a prerequisite check before adding new consent
+- Ensures no duplicate consents exist
+- Response time: ~124ms
 
-      expect(result).toEqual(mockBinResponse.binList.bin);
-      expect(mockFetchImplementation).toHaveBeenCalledWith(
-        "https://api.test.com/bin-ranges",
-        expect.objectContaining({
-          method: "GET",
-          headers: expect.objectContaining({
-            "Content-Type": "application/json",
-            "x-api-key": "mock-api-key",
-            "x-apigw-api-id": "mock-gateway-id",
-            "x-request-id": mockCorrelationId,
-            "x-fapi-interaction-id": mockCorrelationId,
-            "x-app-cat-id": "63623",
-            APIHeaderRequest: "NA",
-          }),
-        })
-      );
-    });
+## 3. Add BMO Party Consent API
+Records the user's consent decision in the system.
 
-    it("should throw ServerError when API returns non-200 status", async () => {
-      mockFetchImplementation.mockResolvedValueOnce({
-        status: 500,
-        statusText: "Internal Server Error"
-      });
+### Endpoint
+```
+POST /esbapi/party/bmopartyconsent/v1/addbmopartyconsent
+```
 
-      creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
-      
-      await expect(creditcardUtilityService.getBinRangesCached()).rejects.toThrow();
-    });
+### Request
+```json
+{
+    "ECIFId": "90247224880430021320240801005403055",
+    "Consent": [
+        {
+            "ProcPurpId": "561359846174881811",
+            "AgreeInd": "1",
+            "LanguageAgreedInType": "100",
+            "LanguageAgreedInValue": "English",
+            "EnforcementType": "0",
+            "CreateDate": "2024-09-24T18:09:32.9412",
+            "TenantType": "100000",
+            "TenantValue": "BMO P&BB Canada",
+            "ProfileSystemType": "100149",
+            "ProfileSystemValue": "8545"
+        }
+    ]
+}
+```
 
-    it("should throw ServerError when API call fails", async () => {
-      mockFetchImplementation.mockRejectedValueOnce(new Error("Network error"));
+### Response
+```json
+{
+    "result": {
+        "code": "0",
+        "status": "SUCCESS"
+    },
+    "ECIFId": "90247224880430021320240801005403055",
+    "Consent": {
+        "ConsentId": "908972720137308012",
+        "ConsentOwnerId": "902472248804300213",
+        "ProcPurpId": "561359846174881811",
+        "AgreeInd": "1",
+        "LanguageAgreedInType": "100",
+        "LanguageAgreedInValue": "English",
+        "EnforcementType": "0",
+        "CreateDate": "2024-09-24T18:09:32.9410002",
+        "StartDate": "2024-09-24T18:09:33.077000Z",
+        "ConsentActiveIndicator": "Y",
+        "TenantType": "100000",
+        "TenantValue": "BMO P&BB Canada",
+        "ProfileSystemType": "100149",
+        "ProfileSystemValue": "8545",
+        "ConsentLastUpdateDate": "2024-09-24T18:09:33.0790002",
+        "ConsentLastUpdateUser": "Rov Rules Admin",
+        "ConsentLastUpdateTxId": "846372720137307712"
+    }
+}
+```
 
-      creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
-      
-      await expect(creditcardUtilityService.getBinRangesCached()).rejects.toThrow();
-    });
+### Description
+- Records user's consent decision
+- Creates a new consent record with unique ID
+- Includes detailed audit information
+- Response time: ~429ms
+- Supports multiple tenant types
+- Includes enforcement and language preferences
 
-    it("should use cached values for subsequent calls", async () => {
-      const mockBinResponse = {
-        binList: {
-          bin: [
-            {
-              binStart: "400000",
-              binEnd: "499999",
-              cardType: "VISA",
-            },
-          ],
-        },
-      };
+## Common Elements
 
-      mockFetchImplementation.mockResolvedValue({
-        status: 200,
-        statusText: "OK",
-        json: () => Promise.resolve(mockBinResponse)
-      });
+### Headers
+All APIs require these standard headers:
+```
+Content-Type: application/json
+Accept: application/json
+```
 
-      creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
-      
-      // First call should make the API request
-      const result1 = await creditcardUtilityService.getBinRangesCached();
-      // Second call should use cached value
-      const result2 = await creditcardUtilityService.getBinRangesCached();
+### Error Handling
+- Success responses: HTTP 200
+- Error responses: Standard HTTP error codes (not seen in logs)
+- All responses include correlation IDs for tracking
 
-      expect(result1).toEqual(result2);
-      expect(result1).toEqual(mockBinResponse.binList.bin);
-      expect(mockFetchImplementation).toHaveBeenCalledTimes(1);
-    });
-  });
-});
+### Security
+- Digital signatures required
+- Tenant-specific validation
+- ECIF ID validation
+- Proper correlation tracking
+
+### Audit Trail
+Each consent record includes:
+- Creation timestamp
+- Last update information
+- Update user details
+- Transaction IDs
+- System-specific identifiers
+
+This documentation covers all major APIs in the consent management flow, with their request/response formats and key features.
