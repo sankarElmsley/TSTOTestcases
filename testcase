@@ -59,6 +59,11 @@ export default {
 import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 
+// Add type definitions for global fetch
+declare global {
+  var fetch: (url: string, init?: RequestInit) => Promise<Response>;
+}
+
 // Mocking dependencies
 jest.mock("node-fetch", () => jest.fn());
 jest.mock("///common/utils/logger", () => ({
@@ -96,7 +101,7 @@ describe("CreditcardUtilityService Tests", () => {
     process.env.getBinRangesUrl = "https://api.test.com/bin-ranges";
 
     // Reset the fetch mock before each test
-    (global as any).fetch = jest.fn();
+    global.fetch = jest.fn();
   });
 
   afterEach(() => {
@@ -125,12 +130,12 @@ describe("CreditcardUtilityService Tests", () => {
         },
       };
 
-      (global as any).fetch.mockImplementationOnce(() =>
+      global.fetch = jest.fn().mockImplementationOnce(() =>
         Promise.resolve({
           status: 200,
           statusText: "OK",
           json: () => Promise.resolve(mockBinResponse),
-        })
+        } as Response)
       );
 
       creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
@@ -156,11 +161,11 @@ describe("CreditcardUtilityService Tests", () => {
     });
 
     it("should throw ServerError when API returns non-200 status", async () => {
-      (global as any).fetch.mockImplementationOnce(() =>
+      global.fetch = jest.fn().mockImplementationOnce(() =>
         Promise.resolve({
           status: 500,
           statusText: "Internal Server Error",
-        })
+        } as Response)
       );
 
       creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
@@ -169,7 +174,7 @@ describe("CreditcardUtilityService Tests", () => {
     });
 
     it("should throw ServerError when API call fails", async () => {
-      (global as any).fetch.mockImplementationOnce(() =>
+      global.fetch = jest.fn().mockImplementationOnce(() =>
         Promise.reject(new Error("Network error"))
       );
 
@@ -191,12 +196,12 @@ describe("CreditcardUtilityService Tests", () => {
         },
       };
 
-      (global as any).fetch.mockImplementationOnce(() =>
+      global.fetch = jest.fn().mockImplementationOnce(() =>
         Promise.resolve({
           status: 200,
           statusText: "OK",
           json: () => Promise.resolve(mockBinResponse),
-        })
+        } as Response)
       );
 
       creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
