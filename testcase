@@ -65,6 +65,7 @@ import fetch from 'node-fetch';
 
 import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
+import { AutoCacheResult } from "///common/cache/auto_local_cache";
 import fetch from 'node-fetch';
 
 // Create mock for fetch
@@ -74,6 +75,7 @@ jest.mock('node-fetch', () => ({
   default: (...args: any[]) => mockFetchImplementation(...args)
 }));
 
+// Mock the logger
 jest.mock("///common/utils/logger", () => ({
   debug: jest.fn(),
   debugWithSanitize: jest.fn(),
@@ -86,14 +88,30 @@ jest.mock("///common/utils/logger", () => ({
   logBackendServiceResponse: jest.fn(),
 }));
 
-jest.mock("///common/cross_account/cached_api_information", () => ({
-  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    getValue: jest.fn(() => ({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id",
+// Mock the CrossAccountAPICache
+jest.mock("///common/cross_account/cached_api_information", () => {
+  return {
+    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+      getValue: jest.fn().mockResolvedValue({
+        apiKey: "mock-api-key",
+        apiGatewayId: "mock-gateway-id",
+      })
+    }))
+  };
+});
+
+// Mock the AutoLocalCache
+jest.mock("///common/cache/auto_local_cache", () => {
+  return {
+    AutoLocalCache: jest.fn().mockImplementation((refreshMethod) => ({
+      get_value: jest.fn().mockImplementation(refreshMethod),
     })),
-  })),
-}));
+    AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
+      value,
+      ttl,
+    }))
+  };
+});
 
 describe("CreditcardUtilityService Tests", () => {
   let creditcardUtilityService: CreditcardUtilityService;
@@ -110,6 +128,7 @@ describe("CreditcardUtilityService Tests", () => {
 
     // Clear mock implementations
     mockFetchImplementation.mockReset();
+    jest.clearAllMocks();
   });
 
   afterEach(() => {
@@ -198,7 +217,7 @@ describe("CreditcardUtilityService Tests", () => {
         },
       };
 
-      mockFetchImplementation.mockResolvedValueOnce({
+      mockFetchImplementation.mockResolvedValue({
         status: 200,
         statusText: "OK",
         json: () => Promise.resolve(mockBinResponse)
@@ -212,6 +231,7 @@ describe("CreditcardUtilityService Tests", () => {
       const result2 = await creditcardUtilityService.getBinRangesCached();
 
       expect(result1).toEqual(result2);
+      expect(result1).toEqual(mockBinResponse.binList.bin);
       expect(mockFetchImplementation).toHaveBeenCalledTimes(1);
     });
   });
