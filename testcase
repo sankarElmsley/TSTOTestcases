@@ -65,8 +65,7 @@ import fetch from 'node-fetch';
 
 import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
-import { AutoCacheResult, AutoLocalCache } from "///common/cache/auto_local_cache";
-import { CrossAccountAPICache } from "///common/cross_account/cached_api_information";
+import { AutoCacheResult } from "///common/cache/auto_local_cache";
 
 // Create mock for fetch
 const mockFetchImplementation = jest.fn();
@@ -88,14 +87,34 @@ jest.mock("///common/utils/logger", () => ({
   logBackendServiceResponse: jest.fn(),
 }));
 
+// Mock CrossAccountAPICache
+jest.mock("///common/cross_account/cached_api_information", () => ({
+  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+    getValue: jest.fn().mockResolvedValue({
+      apiKey: "mock-api-key",
+      apiGatewayId: "mock-gateway-id"
+    })
+  }))
+}));
+
+// Mock AutoLocalCache
+jest.mock("///common/cache/auto_local_cache", () => ({
+  AutoLocalCache: jest.fn().mockImplementation(function(refreshMethod) {
+    return {
+      get_value: refreshMethod
+    };
+  }),
+  AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
+    value,
+    ttl
+  }))
+}));
+
 describe("CreditcardUtilityService Tests", () => {
   let creditcardUtilityService: CreditcardUtilityService;
   const mockCorrelationId = "test-correlation-id";
   
   beforeEach(() => {
-    // Reset the module before each test
-    jest.resetModules();
-
     // Mock all required environment variables
     process.env.crossRegion = "us-east-1";
     process.env.REGION = "us-east-1";
@@ -104,49 +123,9 @@ describe("CreditcardUtilityService Tests", () => {
     process.env.ssmParamCcuGatewayId = "test-gateway-id-param";
     process.env.getBinRangesUrl = "https://api.test.com/bin-ranges";
 
-    // Mock CrossAccountAPICache
-    const mockGetValue = jest.fn().mockResolvedValue({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id",
-    });
-    
-    jest.spyOn(CrossAccountAPICache.prototype, 'getValue').mockImplementation(mockGetValue);
-
     // Clear mock implementations
     mockFetchImplementation.mockReset();
     jest.clearAllMocks();
-
-    // Mock AutoLocalCache
-    const mockBinResponse = {
-      binList: {
-        bin: [
-          {
-            binStart: "400000",
-            binEnd: "499999",
-            cardType: "VISA",
-          },
-        ],
-      },
-    };
-
-    // Set up the mock response for fetch
-    mockFetchImplementation.mockResolvedValue({
-      status: 200,
-      statusText: "OK",
-      json: () => Promise.resolve(mockBinResponse)
-    });
-
-    // Create a mock implementation of AutoLocalCache
-    const mockAutoLocalCache = {
-      get_value: jest.fn().mockResolvedValue({
-        value: mockBinResponse.binList.bin,
-        ttl: 24 * 60 * 60 * 1000 // 24 hours in milliseconds
-      })
-    };
-
-    // Mock the AutoLocalCache constructor
-    jest.spyOn(AutoLocalCache.prototype, 'get_value')
-      .mockImplementation(mockAutoLocalCache.get_value);
   });
 
   afterEach(() => {
@@ -232,6 +211,12 @@ describe("CreditcardUtilityService Tests", () => {
           ],
         },
       };
+
+      mockFetchImplementation.mockResolvedValue({
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve(mockBinResponse)
+      });
 
       creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
       
