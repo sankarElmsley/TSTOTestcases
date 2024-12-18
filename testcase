@@ -59,10 +59,9 @@ export default {
 import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 
-// Add type definitions for global fetch
-declare global {
-  var fetch: (url: string, init?: RequestInit) => Promise<Response>;
-}
+import { Bin } from "///src/model/ccu/binRangesResponse";
+import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
+import fetch from 'node-fetch';
 
 // Mocking dependencies
 jest.mock("node-fetch", () => jest.fn());
@@ -90,6 +89,7 @@ jest.mock("///common/cross_account/cached_api_information", () => ({
 describe("CreditcardUtilityService Tests", () => {
   let creditcardUtilityService: CreditcardUtilityService;
   const mockCorrelationId = "test-correlation-id";
+  const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
   
   beforeEach(() => {
     // Mock all required environment variables
@@ -100,8 +100,8 @@ describe("CreditcardUtilityService Tests", () => {
     process.env.ssmParamCcuGatewayId = "test-gateway-id-param";
     process.env.getBinRangesUrl = "https://api.test.com/bin-ranges";
 
-    // Reset the fetch mock before each test
-    global.fetch = jest.fn();
+    // Clear all mocks before each test
+    jest.clearAllMocks();
   });
 
   afterEach(() => {
@@ -130,20 +130,20 @@ describe("CreditcardUtilityService Tests", () => {
         },
       };
 
-      global.fetch = jest.fn().mockImplementationOnce(() =>
+      mockFetch.mockImplementationOnce(() =>
         Promise.resolve({
           status: 200,
           statusText: "OK",
           json: () => Promise.resolve(mockBinResponse),
-        } as Response)
+        } as unknown as Response)
       );
 
       creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
       const result = await creditcardUtilityService.getBinRangesCached();
 
       expect(result).toEqual(mockBinResponse.binList.bin);
-      expect(global.fetch).toHaveBeenCalledTimes(1);
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
         "https://api.test.com/bin-ranges",
         expect.objectContaining({
           method: "GET",
@@ -161,11 +161,11 @@ describe("CreditcardUtilityService Tests", () => {
     });
 
     it("should throw ServerError when API returns non-200 status", async () => {
-      global.fetch = jest.fn().mockImplementationOnce(() =>
+      mockFetch.mockImplementationOnce(() =>
         Promise.resolve({
           status: 500,
           statusText: "Internal Server Error",
-        } as Response)
+        } as unknown as Response)
       );
 
       creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
@@ -174,7 +174,7 @@ describe("CreditcardUtilityService Tests", () => {
     });
 
     it("should throw ServerError when API call fails", async () => {
-      global.fetch = jest.fn().mockImplementationOnce(() =>
+      mockFetch.mockImplementationOnce(() =>
         Promise.reject(new Error("Network error"))
       );
 
@@ -196,12 +196,12 @@ describe("CreditcardUtilityService Tests", () => {
         },
       };
 
-      global.fetch = jest.fn().mockImplementationOnce(() =>
+      mockFetch.mockImplementationOnce(() =>
         Promise.resolve({
           status: 200,
           statusText: "OK",
           json: () => Promise.resolve(mockBinResponse),
-        } as Response)
+        } as unknown as Response)
       );
 
       creditcardUtilityService = new CreditcardUtilityService(mockCorrelationId);
@@ -212,7 +212,7 @@ describe("CreditcardUtilityService Tests", () => {
       const result2 = await creditcardUtilityService.getBinRangesCached();
 
       expect(result1).toEqual(result2);
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
 });
