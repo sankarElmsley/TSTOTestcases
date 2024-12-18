@@ -28,6 +28,34 @@ jest.mock('../../../common/utils/logger', () => ({
 }));
 
 
+
+/** @type {import('ts-jest').JestConfigWithTsJest} */
+export default {
+  preset: "ts-jest",
+  testEnvironment: "node",
+  // Ignore resource files
+  testPathIgnorePatterns: [
+    "/node_modules/",
+    "/test/resources/"
+  ],
+  // Specify where test files are located
+  testMatch: [
+    "**/__tests__/**/*.test.ts",
+    "**/?(*.)+(spec|test).ts"
+  ],
+  extensionsToTreatAsEsm: ['.ts'],
+  transform: {
+    "^.+\\.tsx?$": [
+      "ts-jest",
+      {
+        useESM: true,
+        isolatedModules: true,
+      },
+    ],
+  },
+};
+
+
 @Slf4j
 
 // Mock binRangesResponse
