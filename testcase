@@ -88,27 +88,39 @@ jest.mock("///common/utils/logger", () => ({
 }));
 
 // Mock CrossAccountAPICache
-jest.mock("///common/cross_account/cached_api_information", () => ({
-  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    getValue: jest.fn().mockResolvedValue({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id"
-    })
-  }))
-}));
+const mockGetValue = jest.fn().mockResolvedValue({
+  apiKey: "mock-api-key",
+  apiGatewayId: "mock-gateway-id"
+});
 
-// Mock AutoLocalCache
-jest.mock("///common/cache/auto_local_cache", () => ({
-  AutoLocalCache: jest.fn().mockImplementation(function(refreshMethod) {
-    return {
-      get_value: refreshMethod
-    };
-  }),
-  AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
-    value,
-    ttl
-  }))
-}));
+jest.mock("///common/cross_account/cached_api_information", () => {
+  return {
+    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+      getValue: mockGetValue
+    }))
+  };
+});
+
+// Mock AutoLocalCache and AutoCacheResult
+jest.mock("///common/cache/auto_local_cache", () => {
+  const originalModule = jest.requireActual("///common/cache/auto_local_cache");
+  
+  return {
+    ...originalModule,
+    AutoLocalCache: jest.fn().mockImplementation(function(refreshMethod) {
+      return {
+        get_value: async () => {
+          const result = await refreshMethod();
+          return result;
+        }
+      };
+    }),
+    AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
+      value: value,
+      ttl: ttl
+    }))
+  };
+});
 
 describe("CreditcardUtilityService Tests", () => {
   let creditcardUtilityService: CreditcardUtilityService;
@@ -123,8 +135,9 @@ describe("CreditcardUtilityService Tests", () => {
     process.env.ssmParamCcuGatewayId = "test-gateway-id-param";
     process.env.getBinRangesUrl = "https://api.test.com/bin-ranges";
 
-    // Clear mock implementations
+    // Reset all mocks
     mockFetchImplementation.mockReset();
+    mockGetValue.mockClear();
     jest.clearAllMocks();
   });
 
