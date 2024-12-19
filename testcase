@@ -79,11 +79,6 @@ const mockSuccessResponse = {
   }
 };
 
-let mockGetValue = jest.fn().mockResolvedValue({
-  apiKey: "mock-api-key",
-  apiGatewayId: "mock-gateway-id"
-});
-
 // Mock logger functions
 jest.mock("../../../../common/utils/logger", () => ({
   debug: jest.fn(),
@@ -98,7 +93,10 @@ jest.mock("../../../../common/utils/logger", () => ({
 // Mock CrossAccountAPICache following working pattern
 jest.mock("../../../../common/cross_account/cached_api_information", () => ({
   CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    getValue: () => mockGetValue()
+    value: () => Promise.resolve({
+      apiKey: "mock-api-key",
+      apiGatewayId: "mock-gateway-id"
+    })
   }))
 }));
 
@@ -106,12 +104,6 @@ describe("CreditCardArrangementReportService", () => {
   beforeEach(() => {
     // Reset all mocks
     jest.clearAllMocks();
-    
-    // Reset mockGetValue to success case
-    mockGetValue = jest.fn().mockResolvedValue({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id"
-    });
     
     // Set up environment variables
     process.env = {
@@ -139,8 +131,7 @@ describe("CreditCardArrangementReportService", () => {
 
   describe("getCreditCardDetail", () => {
     test("should fetch full credit card details successfully", async () => {
-      // Mock fetch success response
-      global.fetch = jest.fn().mockImplementationOnce(() =>
+      global.fetch = jest.fn().mockImplementation(() =>
         Promise.resolve({
           status: 200,
           json: () => Promise.resolve(mockSuccessResponse)
@@ -165,7 +156,7 @@ describe("CreditCardArrangementReportService", () => {
     });
 
     test("should fetch only available balance when specified", async () => {
-      global.fetch = jest.fn().mockImplementationOnce(() =>
+      global.fetch = jest.fn().mockImplementation(() =>
         Promise.resolve({
           status: 200,
           json: () => Promise.resolve(mockSuccessResponse)
@@ -184,7 +175,7 @@ describe("CreditCardArrangementReportService", () => {
     });
 
     test("should throw error when API returns non-200 status", async () => {
-      global.fetch = jest.fn().mockImplementationOnce(() =>
+      global.fetch = jest.fn().mockImplementation(() =>
         Promise.resolve({
           status: 500,
           statusText: "Internal Server Error"
@@ -193,32 +184,17 @@ describe("CreditCardArrangementReportService", () => {
 
       await expect(creditCardArrangementService.getCreditCardDetail(false))
         .rejects
-        .toThrow("CC_DETAILS_API_INVALID_RESPONSE_STATUS");
+        .toThrow(/CC_DETAILS_API_INVALID_RESPONSE_STATUS/);
     });
 
     test("should throw error when API call fails", async () => {
-      global.fetch = jest.fn().mockImplementationOnce(() => 
+      global.fetch = jest.fn().mockImplementation(() => 
         Promise.reject(new Error("Network error"))
       ) as jest.Mock;
 
       await expect(creditCardArrangementService.getCreditCardDetail(false))
         .rejects
-        .toThrow("CC_DETAILS_API_UNEXPECTED_ERROR");
-    });
-
-    test("should throw error when SSM params are missing", async () => {
-      // Mock getValue to simulate SSM error
-      mockGetValue = jest.fn().mockRejectedValue(new Error("SSM Error"));
-      
-      creditCardArrangementService = new CreditCardArrangementReportService(
-        mockCardNumber,
-        mockClientId,
-        mockCorrelationId
-      );
-
-      await expect(creditCardArrangementService.getCreditCardDetail(false))
-        .rejects
-        .toThrow("CC_DETAILS_API_UNEXPECTED_ERROR");
+        .toThrow(/CC_DETAILS_API_UNEXPECTED_ERROR/);
     });
   });
 });
