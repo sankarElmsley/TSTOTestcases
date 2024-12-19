@@ -79,11 +79,6 @@ const mockSuccessResponse = {
   }
 };
 
-let mockGetValue = jest.fn().mockResolvedValue({
-  apiKey: "mock-api-key",
-  apiGatewayId: "mock-gateway-id"
-});
-
 // Mock logger functions
 jest.mock("../../../../common/utils/logger", () => ({
   debug: jest.fn(),
@@ -97,25 +92,11 @@ jest.mock("../../../../common/utils/logger", () => ({
   logBackendServiceResponse: jest.fn()
 }));
 
-// Mock CrossAccountAPICache exactly like utility service test
-jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-  __esModule: true,
-  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    get_value: () => mockGetValue()
-  }))
-}));
-
 describe("CreditCardArrangementReportService", () => {
   beforeEach(() => {
     // Reset all mocks
     jest.clearAllMocks();
     
-    // Reset mockGetValue to success case
-    mockGetValue = jest.fn().mockResolvedValue({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id"
-    });
-
     // Set up environment variables
     process.env = {
       crossRegion: "us-east-1",
@@ -124,6 +105,14 @@ describe("CreditCardArrangementReportService", () => {
       ssmParamCcarApiKey: "test-api-key",
       ssmParamCcarGatewayId: "test-gateway-id",
       getCardDetailsUrl: "https://test-api.bmo.com/v1/card-details"
+    };
+
+    // Mock the static apiInfoCache directly on the class
+    CreditCardArrangementReportService["apiInfoCache"] = {
+      value: jest.fn().mockResolvedValue({
+        apiKey: "mock-api-key",
+        apiGatewayId: "mock-gateway-id"
+      })
     };
 
     // Create new instance
@@ -138,6 +127,8 @@ describe("CreditCardArrangementReportService", () => {
     jest.clearAllMocks();
     // Clean up environment variables
     process.env = {};
+    // Reset the static apiInfoCache
+    CreditCardArrangementReportService["apiInfoCache"] = null;
   });
 
   describe("getCreditCardDetail", () => {
@@ -209,13 +200,10 @@ describe("CreditCardArrangementReportService", () => {
     });
 
     test("should throw error when SSM params are missing", async () => {
-      mockGetValue = jest.fn().mockRejectedValue(new Error("SSM Error"));
-      
-      creditCardArrangementService = new CreditCardArrangementReportService(
-        mockCardNumber,
-        mockClientId,
-        mockCorrelationId
-      );
+      // Set apiInfoCache.value to throw error
+      CreditCardArrangementReportService["apiInfoCache"] = {
+        value: jest.fn().mockRejectedValue(new Error("SSM Error"))
+      };
 
       await expect(creditCardArrangementService.getCreditCardDetail(false))
         .rejects
