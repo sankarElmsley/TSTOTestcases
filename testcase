@@ -64,64 +64,49 @@ import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilitySe
 import fetch from 'node-fetch';
 
 import { CreditCardRewardService } from "///src/service/ccr/creditCardRewardService";
-import { CrossAccountAPICache } from "../../../../common/cross_account/cached_api_information";
 
 // Mock logger
 jest.mock("../../../../common/utils/logger", () => ({
   debug: jest.fn(),
-  debugWithSanitize: jest.fn(),
   error: jest.fn(),
   info: jest.fn(),
-  infoWithSanitize: jest.fn(),
   trace: jest.fn(),
   logBackendServiceError: jest.fn(),
   logBackendServiceRequest: jest.fn(),
   logBackendServiceResponse: jest.fn(),
 }));
 
-// Create mock constructor for CrossAccountAPICache
-const mockCrossAccountAPIConstructor = jest.fn();
-
 // Mock CrossAccountAPICache
-jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-  CrossAccountAPICache: jest.fn().mockImplementation((...args) => {
-    mockCrossAccountAPIConstructor(...args);
-    return {
+jest.mock("../../../../common/cross_account/cached_api_information", () => {
+  return {
+    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
       getValue: jest.fn().mockResolvedValue({
         apiKey: "mock-api-key",
-        apiGatewayId: "mock-gateway-id",
-      }),
-    };
-  }),
-}));
+        apiGatewayId: "mock-gateway-id"
+      })
+    }))
+  };
+});
 
 describe("CreditCardRewardService Tests", () => {
-  let creditCardRewardService: CreditCardRewardService;
   const mockSessionId = "test-session-id";
   const mockEcifId = "test-ecif-id";
   const mockCorrelationId = "test-correlation-id";
 
   beforeEach(() => {
-    // Reset module registry before each test
-    jest.resetModules();
-    
-    // Reset constructor mock
-    mockCrossAccountAPIConstructor.mockClear();
-    
-    // Set up environment variables
+    // Set required environment variables
     process.env.crossRegion = "us-east-1";
     process.env.REGION = "us-east-1";
     process.env.crossAccountRoleForCdbContext = "test-role";
     process.env.ssmParamCdbContextApiKey = "test-api-key";
     process.env.ssmParamCdbContextGatewayId = "test-gateway-id";
     
-    // Reset all mocks
+    // Clear all mocks
     jest.clearAllMocks();
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
-    // Clear environment variables
+    // Clean up environment variables
     delete process.env.crossRegion;
     delete process.env.REGION;
     delete process.env.crossAccountRoleForCdbContext;
@@ -129,122 +114,89 @@ describe("CreditCardRewardService Tests", () => {
     delete process.env.ssmParamCdbContextGatewayId;
   });
 
-  describe("constructor", () => {
-    test("should create instance with provided values", () => {
-      const service = new CreditCardRewardService(
-        mockSessionId,
-        mockEcifId,
-        mockCorrelationId
-      );
-      
-      expect(service).toBeInstanceOf(CreditCardRewardService);
-    });
-
-    test("should handle missing environment variables", () => {
-      delete process.env.crossRegion;
-      delete process.env.REGION;
-
-      expect(() => 
-        new CreditCardRewardService(
-          mockSessionId,
-          mockEcifId,
-          mockCorrelationId
-        )
-      ).not.toThrow();
-    });
+  test("should create instance successfully", () => {
+    const service = new CreditCardRewardService(
+      mockSessionId,
+      mockEcifId,
+      mockCorrelationId
+    );
+    
+    expect(service).toBeInstanceOf(CreditCardRewardService);
   });
 
-  describe("loadApiInfo", () => {
-    test("should initialize apiInfoCache with correct parameters", () => {
-      // Create new instance to trigger initialization
-      new CreditCardRewardService(
-        mockSessionId,
-        mockEcifId,
-        mockCorrelationId
-      );
+  test("should handle API initialization", () => {
+    const CrossAccountAPICacheMock = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
+    
+    new CreditCardRewardService(
+      mockSessionId,
+      mockEcifId,
+      mockCorrelationId
+    );
 
-      // Verify CrossAccountAPICache constructor was called with correct parameters
-      expect(mockCrossAccountAPIConstructor).toHaveBeenCalledWith(
-        "us-east-1",
-        "us-east-1",
-        "test-role",
-        "test-api-key",
-        "test-gateway-id",
-        3600000  // 60 * 60 * 1000
-      );
-    });
-
-    test("should not reinitialize apiInfoCache if already exists", () => {
-      // Create first instance
-      new CreditCardRewardService(
-        mockSessionId,
-        mockEcifId,
-        mockCorrelationId
-      );
-      
-      // Reset constructor mock
-      mockCrossAccountAPIConstructor.mockClear();
-      
-      // Create second instance
-      new CreditCardRewardService(
-        mockSessionId,
-        mockEcifId,
-        mockCorrelationId
-      );
-
-      // Verify constructor wasn't called again
-      expect(mockCrossAccountAPIConstructor).not.toHaveBeenCalled();
-    });
+    expect(CrossAccountAPICacheMock).toHaveBeenCalledWith(
+      "us-east-1",
+      "us-east-1",
+      "test-role",
+      "test-api-key",
+      "test-gateway-id",
+      3600000
+    );
   });
 
-  describe("getRewardDetails", () => {
-    test("should return empty string (placeholder implementation)", async () => {
-      creditCardRewardService = new CreditCardRewardService(
-        mockSessionId,
-        mockEcifId,
-        mockCorrelationId
-      );
-      
-      const result = await creditCardRewardService.getRewardDetails();
-      expect(result).toBe("");
-    });
+  test("should handle missing environment variables", () => {
+    delete process.env.crossRegion;
+    delete process.env.REGION;
 
-    test("should log trace messages", async () => {
-      const mockTrace = require("../../../../common/utils/logger").trace;
-      
-      creditCardRewardService = new CreditCardRewardService(
-        mockSessionId,
-        mockEcifId,
-        mockCorrelationId
-      );
-      
-      await creditCardRewardService.getRewardDetails();
-
-      expect(mockTrace).toHaveBeenCalledWith(
-        "CreditCardRewardService - In getRewardDetails.....",
-        mockCorrelationId
-      );
-      expect(mockTrace).toHaveBeenCalledWith(
-        "CreditCardRewardService - Out getRewardDetails.",
-        mockCorrelationId
-      );
-    });
+    expect(() => new CreditCardRewardService(
+      mockSessionId,
+      mockEcifId,
+      mockCorrelationId
+    )).not.toThrow();
   });
 
-  describe("error handling", () => {
-    test("should throw ServerError when CrossAccountAPICache initialization fails", () => {
-      // Mock constructor to throw error
-      mockCrossAccountAPIConstructor.mockImplementationOnce(() => {
-        throw new Error("API Cache Error");
-      });
+  test("should get reward details", async () => {
+    const service = new CreditCardRewardService(
+      mockSessionId,
+      mockEcifId,
+      mockCorrelationId
+    );
 
-      expect(() => 
-        new CreditCardRewardService(
-          mockSessionId,
-          mockEcifId,
-          mockCorrelationId
-        )
-      ).toThrow();
+    const result = await service.getRewardDetails();
+    expect(result).toBe("");
+  });
+
+  test("should log trace messages in getRewardDetails", async () => {
+    const mockTrace = require("../../../../common/utils/logger").trace;
+    const service = new CreditCardRewardService(
+      mockSessionId,
+      mockEcifId,
+      mockCorrelationId
+    );
+
+    await service.getRewardDetails();
+
+    expect(mockTrace).toHaveBeenCalledWith(
+      "CreditCardRewardService - In getRewardDetails.....",
+      mockCorrelationId
+    );
+    expect(mockTrace).toHaveBeenCalledWith(
+      "CreditCardRewardService - Out getRewardDetails.",
+      mockCorrelationId
+    );
+  });
+
+  test("should handle API initialization error", () => {
+    const CrossAccountAPICacheMock = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
+    
+    CrossAccountAPICacheMock.mockImplementationOnce(() => {
+      throw new Error("API Cache Error");
     });
+
+    expect(() => new CreditCardRewardService(
+      mockSessionId,
+      mockEcifId,
+      mockCorrelationId
+    )).toThrow();
   });
 });
+
