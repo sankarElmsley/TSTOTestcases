@@ -67,8 +67,6 @@ import { CreditCardArrangementReportService } from "../src/service/ccar/creditCa
 
 import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
 
-import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
-
 let creditCardArrangementService: CreditCardArrangementReportService;
 const mockCardNumber = "4500000000000001";
 const mockClientId = "testClient123";
@@ -155,8 +153,8 @@ describe("CreditCardArrangementReportService", () => {
     Object.defineProperty(CreditCardArrangementReportService, 'apiInfoCache', {
       value: {
         value: jest.fn().mockResolvedValue({
-          apiKey: "mock-api-key",
-          apiGatewayId: "mock-gateway-id"
+          apiKey: "mock-param-value",
+          apiGatewayId: "mock-param-value"
         })
       },
       writable: true
@@ -194,15 +192,18 @@ describe("CreditCardArrangementReportService", () => {
       
       expect(result).toEqual(mockSuccessResponse);
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
+        "https://test-api.bmo.com/v1/card-details",
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({
             "Content-Type": "application/json",
-            "x-api-key": "mock-api-key",
-            "x-apigw-api-id": "mock-gateway-id",
+            "x-api-key": "mock-param-value",
+            "x-apigw-api-id": "mock-param-value",
+            "x-app-cat-id": "63623",
+            "x-fapi-interaction-id": mockCorrelationId,
             "x-request-id": mockCorrelationId
-          })
+          }),
+          body: expect.stringContaining('"cardNumber":"4500000000000001"')
         })
       );
     });
@@ -219,8 +220,9 @@ describe("CreditCardArrangementReportService", () => {
       
       expect(result).toEqual(mockSuccessResponse);
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.any(String),
+        "https://test-api.bmo.com/v1/card-details",
         expect.objectContaining({
+          method: "POST",
           body: expect.stringContaining('"segmentName":["IRA"]')
         })
       );
@@ -236,7 +238,7 @@ describe("CreditCardArrangementReportService", () => {
 
       await expect(creditCardArrangementService.getCreditCardDetail(false))
         .rejects
-        .toThrow(/CC_DETAILS_API_INVALID_RESPONSE_STATUS/);
+        .toThrow("CC_DETAILS_API_INVALID_RESPONSE_STATUS");
     });
 
     test("should throw error when API call fails", async () => {
@@ -246,7 +248,7 @@ describe("CreditCardArrangementReportService", () => {
 
       await expect(creditCardArrangementService.getCreditCardDetail(false))
         .rejects
-        .toThrow(/CC_DETAILS_API_UNEXPECTED_ERROR/);
+        .toThrow("CC_DETAILS_API_UNEXPECTED_ERROR");
     });
 
     test("should throw error when API cache fails", async () => {
@@ -260,7 +262,7 @@ describe("CreditCardArrangementReportService", () => {
 
       await expect(creditCardArrangementService.getCreditCardDetail(false))
         .rejects
-        .toThrow(/CC_DETAILS_API_UNEXPECTED_ERROR/);
+        .toThrow("CC_DETAILS_API_UNEXPECTED_ERROR");
     });
   });
 });
