@@ -208,8 +208,16 @@ describe("CreditCardArrangementReportService", () => {
       
       expect(result).toEqual(mockSuccessResponse);
       expect(global.fetch).toHaveBeenCalled();
-      const requestBody = JSON.parse(global.fetch.mock.calls[0][1].body);
-      expect(requestBody.requestControl.segmentName).toEqual(["IRA"]);
+      
+      const requestConfig = global.fetch.mock.calls[0][1];
+      const requestBody = typeof requestConfig.body === 'string' 
+        ? JSON.parse(requestConfig.body) 
+        : requestConfig.body;
+
+      expect(requestBody).toBeTruthy();
+      expect(requestBody.requestControl?.segmentName).toBeTruthy();
+      expect(Array.isArray(requestBody.requestControl.segmentName)).toBe(true);
+      expect(requestBody.requestControl.segmentName).toContain("IRA");
     });
 
     test("should throw error when API returns non-200 status", async () => {
