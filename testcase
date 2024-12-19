@@ -64,3 +64,134 @@ import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilitySe
 import fetch from 'node-fetch';
 
 
+import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
+
+let creditcardUtilityService: CreditcardUtilityService;
+let mockedAutoLocalCache: jest.Mock;
+let localBINCache = require("../../../../common/cache/auto_local_cache");
+
+// Mock logger
+jest.mock("../../../../common/utils/logger", () => ({
+  debug: jest.fn(),
+  debugWithSanitize: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  infoWithSanitize: jest.fn(),
+  trace: jest.fn(),
+  logBackendServiceError: jest.fn(),
+  logBackendServiceRequest: jest.fn(),
+  logBackendServiceResponse: jest.fn(),
+}));
+
+// Mock auto_local_cache
+jest.mock("../../../../common/cache/auto_local_cache", () => ({
+  __esModule: true,
+  AutoLocalCache: jest.fn().mockImplementation(() => ({
+    get_value: jest.fn().mockResolvedValue({
+      value: [],
+    }),
+  })),
+  AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
+    value,
+    ttl,
+  })),
+}));
+
+// Mock CrossAccountAPICache
+jest.mock("../../../../common/cross_account/cached_api_information", () => ({
+  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+    getValue: jest.fn().mockResolvedValue({
+      apiKey: "mock-api-key",
+      apiGatewayId: "mock-gateway-id",
+    }),
+  })),
+}));
+
+describe("CreditcardUtilityService Tests", () => {
+  beforeEach(() => {
+    process.env.crossRegion = "us-east-1";
+    process.env.REGION = "us-east-1";
+    process.env.crossAccountRoleForCCU = "test-role";
+    process.env.ssmParamCcuApiKey = "test-api-key";
+    process.env.ssmParamCcuGatewayId = "test-gateway-id";
+    process.env.getBinRangesUrl = "https://api.test.com/bin-ranges";
+
+    creditcardUtilityService = new CreditcardUtilityService("correlationId");
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    delete process.env.crossRegion;
+    delete process.env.REGION;
+    delete process.env.crossAccountRoleForCCU;
+    delete process.env.ssmParamCcuApiKey;
+    delete process.env.ssmParamCcuGatewayId;
+    delete process.env.getBinRangesUrl;
+  });
+
+  test("getBinRangesCached: returns the cached value", async () => {
+    const mockBinData = [{ binStart: "400000", binEnd: "499999" }];
+    
+    (localBINCache.AutoLocalCache as jest.Mock).mockImplementation(() => ({
+      get_value: jest.fn().mockResolvedValue({
+        value: mockBinData,
+      }),
+    }));
+
+    creditcardUtilityService = new CreditcardUtilityService("correlationId");
+    const result = await creditcardUtilityService.getBinRangesCached();
+    expect(result).toEqual(mockBinData);
+  });
+
+  test("getBinRanges: successfully fetches bin ranges from API", async () => {
+    const mockBinResponse = {
+      binList: {
+        bin: [
+          { binStart: "400000", binEnd: "499999" }
+        ],
+      },
+    };
+
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(mockBinResponse),
+      })
+    ) as jest.Mock;
+
+    const mockGetBinRange = jest.spyOn(
+      CreditcardUtilityService.prototype as any,
+      "getBinRanges"
+    );
+
+    await creditcardUtilityService["refreshBINCache"]();
+    expect(mockGetBinRange).toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.test.com/bin-ranges",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          "x-api-key": "mock-api-key",
+          "x-apigw-api-id": "mock-gateway-id",
+        }),
+      })
+    );
+  });
+
+  test("getBinRanges: throws error when API returns non-200 status", async () => {
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        status: 500,
+        statusText: "Internal Server Error",
+      })
+    ) as jest.Mock;
+
+    await expect(creditcardUtilityService["refreshBINCache"]()).rejects.toThrow();
+  });
+
+  test("getBinRanges: throws error when API call fails", async () => {
+    global.fetch = jest.fn(() => Promise.reject(new Error("Network error"))) as jest.Mock;
+
+    await expect(creditcardUtilityService["refreshBINCache"]()).rejects.toThrow();
+  });
+});
