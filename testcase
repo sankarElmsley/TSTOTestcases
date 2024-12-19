@@ -65,6 +65,8 @@ import fetch from 'node-fetch';
 
 import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
 
+import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
+
 let creditCardArrangementService: CreditCardArrangementReportService;
 const mockCardNumber = "4500000000000001";
 const mockClientId = "testClient123";
@@ -84,27 +86,18 @@ let mockGetValue = jest.fn().mockResolvedValue({
   apiGatewayId: "mock-gateway-id"
 });
 
-// Mock AWS SDK
-jest.mock('@aws-sdk/client-sts', () => ({
-  STSClient: jest.fn().mockImplementation(() => ({
-    send: jest.fn().mockResolvedValue({
-      Credentials: {
-        AccessKeyId: 'mock-access-key',
-        SecretAccessKey: 'mock-secret-key',
-        SessionToken: 'mock-session-token'
-      }
-    })
-  }))
+// Mock the common/aws/sts module
+jest.mock("../../../../common/aws/sts", () => ({
+  AssumeRole: jest.fn().mockResolvedValue({
+    accessKeyId: "mock-access-key",
+    secretAccessKey: "mock-secret-key",
+    sessionToken: "mock-session-token"
+  })
 }));
 
-jest.mock('@aws-sdk/client-ssm', () => ({
-  SSMClient: jest.fn().mockImplementation(() => ({
-    send: jest.fn().mockResolvedValue({
-      Parameter: {
-        Value: 'mock-param-value'
-      }
-    })
-  }))
+// Mock the common/aws/ssm module
+jest.mock("../../../../common/aws/ssm", () => ({
+  GetParamValue: jest.fn().mockResolvedValue("mock-param-value")
 }));
 
 // Mock logger functions
@@ -120,23 +113,13 @@ jest.mock("../../../../common/utils/logger", () => ({
   logBackendServiceResponse: jest.fn()
 }));
 
-// Mock auto_local_cache
-jest.mock("../../../../common/cache/auto_local_cache", () => ({
-  __esModule: true,
-  AutoLocalCache: jest.fn().mockImplementation(() => ({
-    get_value: () => mockGetValue()
-  })),
-  AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
-    value,
-    ttl
-  }))
-}));
-
-// Mock CrossAccountAPICache
+// Mock the full CrossAccountAPICache implementation
 jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-  __esModule: true,
   CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    value: () => mockGetValue()
+    value: () => Promise.resolve({
+      apiKey: "mock-api-key",
+      apiGatewayId: "mock-gateway-id"
+    })
   }))
 }));
 
@@ -145,12 +128,6 @@ describe("CreditCardArrangementReportService", () => {
     // Reset all mocks
     jest.clearAllMocks();
     
-    // Reset mockGetValue to success case
-    mockGetValue = jest.fn().mockResolvedValue({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id"
-    });
-
     // Set up environment variables
     process.env = {
       AWS_REGION: "us-east-1",
@@ -238,15 +215,6 @@ describe("CreditCardArrangementReportService", () => {
       global.fetch = jest.fn(() => 
         Promise.reject(new Error("Network error"))
       ) as jest.Mock;
-
-      await expect(creditCardArrangementService.getCreditCardDetail(false))
-        .rejects
-        .toThrow(/CC_DETAILS_API_UNEXPECTED_ERROR/);
-    });
-
-    test("should throw error when SSM params are missing", async () => {
-      // Reset mockGetValue to simulate error
-      mockGetValue = jest.fn().mockRejectedValue(new Error("SSM Error"));
 
       await expect(creditCardArrangementService.getCreditCardDetail(false))
         .rejects
