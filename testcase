@@ -63,74 +63,158 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { CreditCardRewardService } from "///src/service/ccr/creditCardRewardService";
+import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
 
-// Mock logger
+let creditCardArrangementService: CreditCardArrangementReportService;
+const mockCardNumber = "4500000000000001";
+const mockClientId = "testClient123";
+const mockCorrelationId = "test-correlation-id";
+
+// Mock logger functions
 jest.mock("../../../../common/utils/logger", () => ({
   debug: jest.fn(),
-  error: jest.fn(),
-  info: jest.fn(),
   trace: jest.fn(),
-  logBackendServiceError: jest.fn(),
+  info: jest.fn(),
+  error: jest.fn(),
   logBackendServiceRequest: jest.fn(),
   logBackendServiceResponse: jest.fn(),
+  logBackendServiceError: jest.fn()
 }));
 
-describe("CreditCardRewardService Tests", () => {
-  let service: CreditCardRewardService;
-  
+// Mock CrossAccountAPICache
+jest.mock("../../../../common/cross_account/cached_api_information", () => ({
+  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+    value: jest.fn().mockResolvedValue({
+      apiKey: "mock-api-key",
+      apiGatewayId: "mock-gateway-id"
+    })
+  }))
+}));
+
+describe("CreditCardArrangementReportService", () => {
   beforeEach(() => {
-    // Set required environment variables
-    process.env.crossRegion = "us-east-1";
-    process.env.REGION = "us-east-1";
-    process.env.crossAccountRoleForCdbContext = "test-role";
-    process.env.ssmParamCdbContextApiKey = "test-api-key";
-    process.env.ssmParamCdbContextGatewayId = "test-gateway-id";
-    
-    // Clear all mocks
+    // Reset all mocks
     jest.clearAllMocks();
+    
+    // Set up environment variables
+    process.env = {
+      crossRegion: "us-east-1",
+      REGION: "us-east-1",
+      crossAccountRoleForCCAR: "test-role",
+      ssmParamCcarApiKey: "test-api-key",
+      ssmParamCcarGatewayId: "test-gateway-id",
+      getCardDetailsUrl: "https://test-api.bmo.com/v1/card-details"
+    };
+
+    // Create new instance
+    creditCardArrangementService = new CreditCardArrangementReportService(
+      mockCardNumber,
+      mockClientId,
+      mockCorrelationId
+    );
   });
 
   afterEach(() => {
+    jest.clearAllMocks();
     // Clean up environment variables
-    delete process.env.crossRegion;
-    delete process.env.REGION;
-    delete process.env.crossAccountRoleForCdbContext;
-    delete process.env.ssmParamCdbContextApiKey;
-    delete process.env.ssmParamCdbContextGatewayId;
+    process.env = {};
   });
 
-  test("should get reward details", async () => {
-    // Create service instance
-    service = new CreditCardRewardService(
-      "test-session-id",
-      "test-ecif-id",
-      "test-correlation-id"
-    );
+  describe("getCreditCardDetail", () => {
+    const mockSuccessResponse = {
+      data: {
+        accountNumber: "4500000000000001",
+        availableBalance: 5000,
+        totalBalance: 1000,
+        creditLimit: 6000
+      }
+    };
 
-    const result = await service.getRewardDetails();
-    expect(result).toBe("");
-  });
+    test("should fetch full credit card details successfully", async () => {
+      // Mock fetch success response
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve(mockSuccessResponse)
+      }) as jest.Mock;
 
-  test("should log trace messages in getRewardDetails", async () => {
-    const mockTrace = require("../../../../common/utils/logger").trace;
-    
-    // Create service instance
-    service = new CreditCardRewardService(
-      "test-session-id",
-      "test-ecif-id",
-      "test-correlation-id"
-    );
+      const result = await creditCardArrangementService.getCreditCardDetail(false);
+      
+      expect(result).toEqual(mockSuccessResponse);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "Content-Type": "application/json",
+            "x-request-id": mockCorrelationId,
+            "x-fapi-interaction-id": mockCorrelationId
+          }),
+          body: expect.objectContaining({
+            cardNumber: mockCardNumber,
+            clientId: mockClientId,
+            requestControl: {
+              segmentName: expect.arrayContaining(["ICI", "IRA", "ICL", "IGB", "IAS", "ICC", "ICY", "IGA", "IRW", "ITD"])
+            }
+          })
+        })
+      );
+    });
 
-    await service.getRewardDetails();
+    test("should fetch only available balance when specified", async () => {
+      // Mock fetch success response
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve(mockSuccessResponse)
+      }) as jest.Mock;
 
-    expect(mockTrace).toHaveBeenCalledWith(
-      "CreditCardRewardService - In getRewardDetails.....",
-      "test-correlation-id"
-    );
-    expect(mockTrace).toHaveBeenCalledWith(
-      "CreditCardRewardService - Out getRewardDetails.",
-      "test-correlation-id"
-    );
+      const result = await creditCardArrangementService.getCreditCardDetail(true);
+      
+      expect(result).toEqual(mockSuccessResponse);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.objectContaining({
+            requestControl: {
+              segmentName: ["IRA"]
+            }
+          })
+        })
+      );
+    });
+
+    test("should throw error when API returns non-200 status", async () => {
+      // Mock fetch error response
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        status: 500,
+        statusText: "Internal Server Error"
+      }) as jest.Mock;
+
+      await expect(creditCardArrangementService.getCreditCardDetail(false))
+        .rejects
+        .toThrow("CC_DETAILS_API_INVALID_RESPONSE_STATUS");
+    });
+
+    test("should throw error when API call fails", async () => {
+      // Mock fetch network error
+      global.fetch = jest.fn().mockRejectedValueOnce(
+        new Error("Network error")
+      ) as jest.Mock;
+
+      await expect(creditCardArrangementService.getCreditCardDetail(false))
+        .rejects
+        .toThrow("CC_DETAILS_API_UNEXPECTED_ERROR");
+    });
+
+    test("should throw error when SSM params are missing", async () => {
+      // Clear required environment variables
+      delete process.env.crossAccountRoleForCCAR;
+      delete process.env.ssmParamCcarApiKey;
+
+      expect(() => new CreditCardArrangementReportService(
+        mockCardNumber,
+        mockClientId,
+        mockCorrelationId
+      )).toThrow("CC_DETAILS_API_UNEXPECTED_ERROR_SSM_PARAM");
+    });
   });
 });
