@@ -409,3 +409,206 @@ describe("TransientCreditcardDataService", () => {
     });
   });
 });
+
+
+
+
+
+
+
+import { TransientCreditcardDataService } from "../src/service/TransientCreditcardDataService";
+import { CdbContextService } from "../src/service/cdbContext/cdbContextService";
+import { CreditcardUtilityService } from "../src/service/ceu/creditcardUtilityService";
+import { ClientError } from "../src/util/clientError";
+import { ServerError } from "../src/util/serverError";
+import ErrorCodes from "../src/util/errorCodes";
+
+let transientCreditcardService: TransientCreditcardDataService;
+const mockEcifId = "test-ecif-123";
+const mockOcifId = "test-ocif-123";
+const mockSessionId = "test-session-123";
+const mockAccountIndex = 0;
+const mockCorrelationId = "test-correlation-id";
+
+const mockSuccessResponse = {
+  data: {
+    accountNumber: "4500000000000001",
+    availableBalance: 5000,
+    totalBalance: 1000,
+    creditLimit: 6000
+  }
+};
+
+// Mock AWS SDK
+jest.mock('@aws-sdk/client-sts', () => ({
+  STSClient: jest.fn().mockImplementation(() => ({
+    send: jest.fn().mockResolvedValue({
+      Credentials: {
+        AccessKeyId: 'mock-access-key',
+        SecretAccessKey: 'mock-secret-key',
+        SessionToken: 'mock-session-token',
+        Expiration: new Date()
+      }
+    })
+  }))
+}));
+
+jest.mock('@aws-sdk/client-ssm', () => ({
+  SSMClient: jest.fn().mockImplementation(() => ({
+    send: jest.fn().mockResolvedValue({
+      Parameter: {
+        Value: 'mock-param-value'
+      }
+    })
+  }))
+}));
+
+// Mock the common/aws/sts module
+jest.mock("../../../../common/aws/sts", () => ({
+  AssumeRole: jest.fn().mockResolvedValue({
+    accessKeyId: "mock-access-key",
+    secretAccessKey: "mock-secret-key",
+    sessionToken: "mock-session-token"
+  })
+}));
+
+// Mock the common/aws/ssm module
+jest.mock("../../../../common/aws/ssm", () => ({
+  GetParamValue: jest.fn().mockResolvedValue("mock-param-value")
+}));
+
+// Mock logger functions
+jest.mock("../../../../common/utils/logger", () => ({
+  debug: jest.fn(),
+  debugWithSanitize: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  infoWithSanitize: jest.fn(),
+  trace: jest.fn(),
+  logBackendServiceError: jest.fn(),
+  logBackendServiceRequest: jest.fn(),
+  logBackendServiceResponse: jest.fn()
+}));
+
+// Mock all required services
+jest.mock("../src/service/cdbContext/cdbContextService");
+jest.mock("../src/service/ceu/creditcardUtilityService");
+jest.mock("../src/service/ccaev/creditCardAccountEntryViewService");
+jest.mock("../src/service/creditCardDetailSessionDataService");
+
+describe("TransientCreditcardDataService", () => {
+  beforeEach(() => {
+    // Reset all mocks
+    jest.clearAllMocks();
+    
+    // Set up environment variables
+    process.env = {
+      AWS_REGION: "us-east-1",
+      AWS_SDK_LOAD_CONFIG: "1",
+      crossRegion: "us-east-1",
+      REGION: "us-east-1",
+      crossAccountRole: "test-role",
+      ssmParamApiKey: "test-api-key",
+      ssmParamGatewayId: "test-gateway-id",
+      getCardDetailsUrl: "https://test-api.bmo.com/v1/card-details"
+    };
+
+    // Mock the static apiInfoCache
+    Object.defineProperty(TransientCreditcardDataService, 'apiInfoCache', {
+      value: {
+        value: jest.fn().mockResolvedValue({
+          apiKey: "mock-param-value",
+          apiGatewayId: "mock-param-value"
+        })
+      },
+      writable: true
+    });
+
+    // Create new instance
+    transientCreditcardService = new TransientCreditcardDataService(
+      mockEcifId,
+      mockOcifId,
+      mockSessionId,
+      mockAccountIndex,
+      mockCorrelationId
+    );
+
+    // Mock CdbContextService
+    (CdbContextService as jest.Mock).mockImplementation(() => ({
+      getSessionData: jest.fn().mockResolvedValue({ data: mockSessionData })
+    }));
+
+    // Mock CreditcardUtilityService
+    (CreditcardUtilityService as jest.Mock).mockImplementation(() => ({
+      getBinRangesCached: jest.fn().mockResolvedValue(mockBinRanges)
+    }));
+
+    // Mock fetch
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(mockSuccessResponse)
+      })
+    ) as jest.Mock;
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    // Reset the static apiInfoCache
+    Object.defineProperty(TransientCreditcardDataService, 'apiInfoCache', {
+      value: null,
+      writable: true
+    });
+    // Clean up environment variables
+    process.env = {};
+  });
+
+  describe("getCreditcardData", () => {
+    test("should fetch credit card data successfully", async () => {
+      const result = await transientCreditcardService.getCreditcardData();
+      
+      expect(result).toBeDefined();
+      expect(result.data).toBeDefined();
+      expect(result.data.accountNumber).toBe(mockSuccessResponse.data.accountNumber);
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    test("should handle API non-200 response", async () => {
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          status: 500,
+          statusText: "Internal Server Error"
+        })
+      ) as jest.Mock;
+
+      const result = await transientCreditcardService.getCreditcardData();
+      expect(result.status).toBe("Failure");
+      expect(result.statusCode).toBe(500);
+    });
+
+    test("should handle network error", async () => {
+      global.fetch = jest.fn(() => 
+        Promise.reject(new Error("Network error"))
+      ) as jest.Mock;
+
+      const result = await transientCreditcardService.getCreditcardData();
+      expect(result.status).toBe("Failure");
+      expect(result.statusCode).toBe(500);
+    });
+
+    test("should handle apiInfoCache.value() failure", async () => {
+      Object.defineProperty(TransientCreditcardDataService, 'apiInfoCache', {
+        value: {
+          value: jest.fn().mockRejectedValue(new Error("Cache error"))
+        },
+        writable: true
+      });
+
+      const result = await transientCreditcardService.getCreditcardData();
+      expect(result.status).toBe("Failure");
+      expect(result.statusCode).toBe(500);
+    });
+  });
+
+  // ... rest of your test cases for other methods
+});
