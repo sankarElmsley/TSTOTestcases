@@ -63,11 +63,13 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 
 let creditcardUtilityService: CreditcardUtilityService;
 const mockBinData = [{ binStart: "400000", binEnd: "499999" }];
+let mockGetValue = jest.fn().mockResolvedValue({
+  value: mockBinData,
+});
 
 // Mock logger
 jest.mock("../../../../common/utils/logger", () => ({
@@ -86,9 +88,7 @@ jest.mock("../../../../common/utils/logger", () => ({
 jest.mock("../../../../common/cache/auto_local_cache", () => ({
   __esModule: true,
   AutoLocalCache: jest.fn().mockImplementation(() => ({
-    get_value: jest.fn().mockResolvedValue({
-      value: mockBinData,
-    }),
+    get_value: () => mockGetValue(),
   })),
   AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
     value,
@@ -108,6 +108,14 @@ jest.mock("../../../../common/cross_account/cached_api_information", () => ({
 
 describe("CreditcardUtilityService Tests", () => {
   beforeEach(() => {
+    // Reset all mocks
+    jest.clearAllMocks();
+    
+    // Reset mockGetValue to success case
+    mockGetValue = jest.fn().mockResolvedValue({
+      value: mockBinData,
+    });
+
     // Set up environment variables
     process.env.crossRegion = "us-east-1";
     process.env.REGION = "us-east-1";
@@ -116,9 +124,6 @@ describe("CreditcardUtilityService Tests", () => {
     process.env.ssmParamCcuGatewayId = "test-gateway-id";
     process.env.getBinRangesUrl = "https://api.test.com/bin-ranges";
 
-    // Reset all mocks
-    jest.clearAllMocks();
-    
     // Create new instance
     creditcardUtilityService = new CreditcardUtilityService("correlationId");
   });
@@ -153,13 +158,13 @@ describe("CreditcardUtilityService Tests", () => {
       })
     ) as jest.Mock;
 
-    creditcardUtilityService = new CreditcardUtilityService("correlationId");
     const result = await creditcardUtilityService.getBinRangesCached();
-    
     expect(result).toEqual(mockBinData);
   });
 
   test("getBinRanges: throws error when API returns non-200 status", async () => {
+    mockGetValue = jest.fn().mockRejectedValue(new Error("API Error"));
+
     global.fetch = jest.fn(() =>
       Promise.resolve({
         status: 500,
@@ -172,6 +177,8 @@ describe("CreditcardUtilityService Tests", () => {
   });
 
   test("getBinRanges: throws error when API call fails", async () => {
+    mockGetValue = jest.fn().mockRejectedValue(new Error("Network Error"));
+
     global.fetch = jest.fn(() => 
       Promise.reject(new Error("Network error"))
     ) as jest.Mock;
