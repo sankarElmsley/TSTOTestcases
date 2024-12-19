@@ -67,6 +67,8 @@ import { CreditCardArrangementReportService } from "../src/service/ccar/creditCa
 
 import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
 
+import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
+
 let creditCardArrangementService: CreditCardArrangementReportService;
 const mockCardNumber = "4500000000000001";
 const mockClientId = "testClient123";
@@ -80,6 +82,44 @@ const mockSuccessResponse = {
     creditLimit: 6000
   }
 };
+
+// Mock AWS SDK
+jest.mock('@aws-sdk/client-sts', () => ({
+  STSClient: jest.fn().mockImplementation(() => ({
+    send: jest.fn().mockResolvedValue({
+      Credentials: {
+        AccessKeyId: 'mock-access-key',
+        SecretAccessKey: 'mock-secret-key',
+        SessionToken: 'mock-session-token',
+        Expiration: new Date()
+      }
+    })
+  }))
+}));
+
+jest.mock('@aws-sdk/client-ssm', () => ({
+  SSMClient: jest.fn().mockImplementation(() => ({
+    send: jest.fn().mockResolvedValue({
+      Parameter: {
+        Value: 'mock-param-value'
+      }
+    })
+  }))
+}));
+
+// Mock the common/aws/sts module
+jest.mock("../../../../common/aws/sts", () => ({
+  AssumeRole: jest.fn().mockResolvedValue({
+    accessKeyId: "mock-access-key",
+    secretAccessKey: "mock-secret-key",
+    sessionToken: "mock-session-token"
+  })
+}));
+
+// Mock the common/aws/ssm module
+jest.mock("../../../../common/aws/ssm", () => ({
+  GetParamValue: jest.fn().mockResolvedValue("mock-param-value")
+}));
 
 // Mock logger functions
 jest.mock("../../../../common/utils/logger", () => ({
@@ -102,6 +142,7 @@ describe("CreditCardArrangementReportService", () => {
     // Set up environment variables
     process.env = {
       AWS_REGION: "us-east-1",
+      AWS_SDK_LOAD_CONFIG: "1",
       crossRegion: "us-east-1",
       REGION: "us-east-1",
       crossAccountRoleForCCAR: "test-role",
