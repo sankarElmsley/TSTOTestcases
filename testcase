@@ -79,7 +79,6 @@ const mockSuccessResponse = {
   }
 };
 
-// Set up mock value function at top level
 let mockGetValue = jest.fn().mockResolvedValue({
   apiKey: "mock-api-key",
   apiGatewayId: "mock-gateway-id"
@@ -88,18 +87,21 @@ let mockGetValue = jest.fn().mockResolvedValue({
 // Mock logger functions
 jest.mock("../../../../common/utils/logger", () => ({
   debug: jest.fn(),
-  trace: jest.fn(),
-  info: jest.fn(),
+  debugWithSanitize: jest.fn(),
   error: jest.fn(),
+  info: jest.fn(),
+  infoWithSanitize: jest.fn(),
+  trace: jest.fn(),
+  logBackendServiceError: jest.fn(),
   logBackendServiceRequest: jest.fn(),
-  logBackendServiceResponse: jest.fn(),
-  logBackendServiceError: jest.fn()
+  logBackendServiceResponse: jest.fn()
 }));
 
-// Mock CrossAccountAPICache
+// Mock CrossAccountAPICache exactly like utility service test
 jest.mock("../../../../common/cross_account/cached_api_information", () => ({
+  __esModule: true,
   CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    value: () => mockGetValue()
+    get_value: () => mockGetValue()
   }))
 }));
 
@@ -113,7 +115,7 @@ describe("CreditCardArrangementReportService", () => {
       apiKey: "mock-api-key",
       apiGatewayId: "mock-gateway-id"
     });
-    
+
     // Set up environment variables
     process.env = {
       crossRegion: "us-east-1",
@@ -207,7 +209,6 @@ describe("CreditCardArrangementReportService", () => {
     });
 
     test("should throw error when SSM params are missing", async () => {
-      // Mock getValue to simulate SSM error
       mockGetValue = jest.fn().mockRejectedValue(new Error("SSM Error"));
       
       creditCardArrangementService = new CreditCardArrangementReportService(
