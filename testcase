@@ -64,6 +64,7 @@ import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilitySe
 import fetch from 'node-fetch';
 
 import { CreditCardRewardService } from "///src/service/ccr/creditCardRewardService";
+import { CrossAccountAPICache } from "../../../../common/cross_account/cached_api_information";
 
 // Mock logger
 jest.mock("../../../../common/utils/logger", () => ({
@@ -78,14 +79,20 @@ jest.mock("../../../../common/utils/logger", () => ({
   logBackendServiceResponse: jest.fn(),
 }));
 
+// Create mock constructor for CrossAccountAPICache
+const mockCrossAccountAPIConstructor = jest.fn();
+
 // Mock CrossAccountAPICache
 jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    getValue: jest.fn().mockResolvedValue({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id",
-    }),
-  })),
+  CrossAccountAPICache: jest.fn().mockImplementation((...args) => {
+    mockCrossAccountAPIConstructor(...args);
+    return {
+      getValue: jest.fn().mockResolvedValue({
+        apiKey: "mock-api-key",
+        apiGatewayId: "mock-gateway-id",
+      }),
+    };
+  }),
 }));
 
 describe("CreditCardRewardService Tests", () => {
@@ -95,6 +102,12 @@ describe("CreditCardRewardService Tests", () => {
   const mockCorrelationId = "test-correlation-id";
 
   beforeEach(() => {
+    // Reset module registry before each test
+    jest.resetModules();
+    
+    // Reset constructor mock
+    mockCrossAccountAPIConstructor.mockClear();
+    
     // Set up environment variables
     process.env.crossRegion = "us-east-1";
     process.env.REGION = "us-east-1";
@@ -104,13 +117,6 @@ describe("CreditCardRewardService Tests", () => {
     
     // Reset all mocks
     jest.clearAllMocks();
-    
-    // Create new instance
-    creditCardRewardService = new CreditCardRewardService(
-      mockSessionId,
-      mockEcifId,
-      mockCorrelationId
-    );
   });
 
   afterEach(() => {
@@ -134,7 +140,7 @@ describe("CreditCardRewardService Tests", () => {
       expect(service).toBeInstanceOf(CreditCardRewardService);
     });
 
-    test("should throw error when environment variables are missing", () => {
+    test("should handle missing environment variables", () => {
       delete process.env.crossRegion;
       delete process.env.REGION;
 
@@ -150,27 +156,25 @@ describe("CreditCardRewardService Tests", () => {
 
   describe("loadApiInfo", () => {
     test("should initialize apiInfoCache with correct parameters", () => {
-      const mockCrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
-
+      // Create new instance to trigger initialization
       new CreditCardRewardService(
         mockSessionId,
         mockEcifId,
         mockCorrelationId
       );
 
-      expect(mockCrossAccountAPICache).toHaveBeenCalledWith(
+      // Verify CrossAccountAPICache constructor was called with correct parameters
+      expect(mockCrossAccountAPIConstructor).toHaveBeenCalledWith(
         "us-east-1",
         "us-east-1",
         "test-role",
         "test-api-key",
         "test-gateway-id",
-        60 * 60 * 1000
+        3600000  // 60 * 60 * 1000
       );
     });
 
     test("should not reinitialize apiInfoCache if already exists", () => {
-      const mockCrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
-      
       // Create first instance
       new CreditCardRewardService(
         mockSessionId,
@@ -178,8 +182,8 @@ describe("CreditCardRewardService Tests", () => {
         mockCorrelationId
       );
       
-      // Reset mock
-      mockCrossAccountAPICache.mockClear();
+      // Reset constructor mock
+      mockCrossAccountAPIConstructor.mockClear();
       
       // Create second instance
       new CreditCardRewardService(
@@ -188,18 +192,31 @@ describe("CreditCardRewardService Tests", () => {
         mockCorrelationId
       );
 
-      expect(mockCrossAccountAPICache).not.toHaveBeenCalled();
+      // Verify constructor wasn't called again
+      expect(mockCrossAccountAPIConstructor).not.toHaveBeenCalled();
     });
   });
 
   describe("getRewardDetails", () => {
     test("should return empty string (placeholder implementation)", async () => {
+      creditCardRewardService = new CreditCardRewardService(
+        mockSessionId,
+        mockEcifId,
+        mockCorrelationId
+      );
+      
       const result = await creditCardRewardService.getRewardDetails();
       expect(result).toBe("");
     });
 
     test("should log trace messages", async () => {
       const mockTrace = require("../../../../common/utils/logger").trace;
+      
+      creditCardRewardService = new CreditCardRewardService(
+        mockSessionId,
+        mockEcifId,
+        mockCorrelationId
+      );
       
       await creditCardRewardService.getRewardDetails();
 
@@ -216,9 +233,8 @@ describe("CreditCardRewardService Tests", () => {
 
   describe("error handling", () => {
     test("should throw ServerError when CrossAccountAPICache initialization fails", () => {
-      const mockCrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
-      
-      mockCrossAccountAPICache.mockImplementationOnce(() => {
+      // Mock constructor to throw error
+      mockCrossAccountAPIConstructor.mockImplementationOnce(() => {
         throw new Error("API Cache Error");
       });
 
