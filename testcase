@@ -81,25 +81,6 @@ const mockSuccessResponse = {
   }
 };
 
-let mockGetValue = jest.fn().mockResolvedValue({
-  apiKey: "mock-api-key",
-  apiGatewayId: "mock-gateway-id"
-});
-
-// Mock the common/aws/sts module
-jest.mock("../../../../common/aws/sts", () => ({
-  AssumeRole: jest.fn().mockResolvedValue({
-    accessKeyId: "mock-access-key",
-    secretAccessKey: "mock-secret-key",
-    sessionToken: "mock-session-token"
-  })
-}));
-
-// Mock the common/aws/ssm module
-jest.mock("../../../../common/aws/ssm", () => ({
-  GetParamValue: jest.fn().mockResolvedValue("mock-param-value")
-}));
-
 // Mock logger functions
 jest.mock("../../../../common/utils/logger", () => ({
   debug: jest.fn(),
@@ -111,16 +92,6 @@ jest.mock("../../../../common/utils/logger", () => ({
   logBackendServiceError: jest.fn(),
   logBackendServiceRequest: jest.fn(),
   logBackendServiceResponse: jest.fn()
-}));
-
-// Mock the full CrossAccountAPICache implementation
-jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    value: () => Promise.resolve({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id"
-    })
-  }))
 }));
 
 describe("CreditCardArrangementReportService", () => {
@@ -139,6 +110,17 @@ describe("CreditCardArrangementReportService", () => {
       getCardDetailsUrl: "https://test-api.bmo.com/v1/card-details"
     };
 
+    // Mock the static apiInfoCache directly on the service class
+    Object.defineProperty(CreditCardArrangementReportService, 'apiInfoCache', {
+      value: {
+        value: jest.fn().mockResolvedValue({
+          apiKey: "mock-api-key",
+          apiGatewayId: "mock-gateway-id"
+        })
+      },
+      writable: true
+    });
+
     // Create new instance
     creditCardArrangementService = new CreditCardArrangementReportService(
       mockCardNumber,
@@ -149,6 +131,11 @@ describe("CreditCardArrangementReportService", () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    // Reset the static apiInfoCache
+    Object.defineProperty(CreditCardArrangementReportService, 'apiInfoCache', {
+      value: null,
+      writable: true
+    });
     // Clean up environment variables
     process.env = {};
   });
@@ -215,6 +202,20 @@ describe("CreditCardArrangementReportService", () => {
       global.fetch = jest.fn(() => 
         Promise.reject(new Error("Network error"))
       ) as jest.Mock;
+
+      await expect(creditCardArrangementService.getCreditCardDetail(false))
+        .rejects
+        .toThrow(/CC_DETAILS_API_UNEXPECTED_ERROR/);
+    });
+
+    test("should throw error when API cache fails", async () => {
+      // Mock apiInfoCache to throw error
+      Object.defineProperty(CreditCardArrangementReportService, 'apiInfoCache', {
+        value: {
+          value: jest.fn().mockRejectedValue(new Error("Cache error"))
+        },
+        writable: true
+      });
 
       await expect(creditCardArrangementService.getCreditCardDetail(false))
         .rejects
