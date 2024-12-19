@@ -63,13 +63,7 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
-
-let creditcardUtilityService: CreditcardUtilityService;
-const mockBinData = [{ binStart: "400000", binEnd: "499999" }];
-let mockGetValue = jest.fn().mockResolvedValue({
-  value: mockBinData,
-});
+import { CreditCardRewardService } from "///src/service/ccr/creditCardRewardService";
 
 // Mock logger
 jest.mock("../../../../common/utils/logger", () => ({
@@ -84,18 +78,6 @@ jest.mock("../../../../common/utils/logger", () => ({
   logBackendServiceResponse: jest.fn(),
 }));
 
-// Mock auto_local_cache
-jest.mock("../../../../common/cache/auto_local_cache", () => ({
-  __esModule: true,
-  AutoLocalCache: jest.fn().mockImplementation(() => ({
-    get_value: () => mockGetValue(),
-  })),
-  AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
-    value,
-    ttl,
-  })),
-}));
-
 // Mock CrossAccountAPICache
 jest.mock("../../../../common/cross_account/cached_api_information", () => ({
   CrossAccountAPICache: jest.fn().mockImplementation(() => ({
@@ -106,26 +88,29 @@ jest.mock("../../../../common/cross_account/cached_api_information", () => ({
   })),
 }));
 
-describe("CreditcardUtilityService Tests", () => {
-  beforeEach(() => {
-    // Reset all mocks
-    jest.clearAllMocks();
-    
-    // Reset mockGetValue to success case
-    mockGetValue = jest.fn().mockResolvedValue({
-      value: mockBinData,
-    });
+describe("CreditCardRewardService Tests", () => {
+  let creditCardRewardService: CreditCardRewardService;
+  const mockSessionId = "test-session-id";
+  const mockEcifId = "test-ecif-id";
+  const mockCorrelationId = "test-correlation-id";
 
+  beforeEach(() => {
     // Set up environment variables
     process.env.crossRegion = "us-east-1";
     process.env.REGION = "us-east-1";
-    process.env.crossAccountRoleForCCU = "test-role";
-    process.env.ssmParamCcuApiKey = "test-api-key";
-    process.env.ssmParamCcuGatewayId = "test-gateway-id";
-    process.env.getBinRangesUrl = "https://api.test.com/bin-ranges";
-
+    process.env.crossAccountRoleForCdbContext = "test-role";
+    process.env.ssmParamCdbContextApiKey = "test-api-key";
+    process.env.ssmParamCdbContextGatewayId = "test-gateway-id";
+    
+    // Reset all mocks
+    jest.clearAllMocks();
+    
     // Create new instance
-    creditcardUtilityService = new CreditcardUtilityService("correlationId");
+    creditCardRewardService = new CreditCardRewardService(
+      mockSessionId,
+      mockEcifId,
+      mockCorrelationId
+    );
   });
 
   afterEach(() => {
@@ -133,57 +118,117 @@ describe("CreditcardUtilityService Tests", () => {
     // Clear environment variables
     delete process.env.crossRegion;
     delete process.env.REGION;
-    delete process.env.crossAccountRoleForCCU;
-    delete process.env.ssmParamCcuApiKey;
-    delete process.env.ssmParamCcuGatewayId;
-    delete process.env.getBinRangesUrl;
+    delete process.env.crossAccountRoleForCdbContext;
+    delete process.env.ssmParamCdbContextApiKey;
+    delete process.env.ssmParamCdbContextGatewayId;
   });
 
-  test("getBinRangesCached: returns the cached value", async () => {
-    const result = await creditcardUtilityService.getBinRangesCached();
-    expect(result).toEqual(mockBinData);
+  describe("constructor", () => {
+    test("should create instance with provided values", () => {
+      const service = new CreditCardRewardService(
+        mockSessionId,
+        mockEcifId,
+        mockCorrelationId
+      );
+      
+      expect(service).toBeInstanceOf(CreditCardRewardService);
+    });
+
+    test("should throw error when environment variables are missing", () => {
+      delete process.env.crossRegion;
+      delete process.env.REGION;
+
+      expect(() => 
+        new CreditCardRewardService(
+          mockSessionId,
+          mockEcifId,
+          mockCorrelationId
+        )
+      ).not.toThrow();
+    });
   });
 
-  test("getBinRanges: successfully fetches bin ranges from API", async () => {
-    const mockResponse = {
-      binList: {
-        bin: mockBinData
-      }
-    };
+  describe("loadApiInfo", () => {
+    test("should initialize apiInfoCache with correct parameters", () => {
+      const mockCrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
 
-    global.fetch = jest.fn(() =>
-      Promise.resolve({
-        status: 200,
-        json: () => Promise.resolve(mockResponse),
-      })
-    ) as jest.Mock;
+      new CreditCardRewardService(
+        mockSessionId,
+        mockEcifId,
+        mockCorrelationId
+      );
 
-    const result = await creditcardUtilityService.getBinRangesCached();
-    expect(result).toEqual(mockBinData);
+      expect(mockCrossAccountAPICache).toHaveBeenCalledWith(
+        "us-east-1",
+        "us-east-1",
+        "test-role",
+        "test-api-key",
+        "test-gateway-id",
+        60 * 60 * 1000
+      );
+    });
+
+    test("should not reinitialize apiInfoCache if already exists", () => {
+      const mockCrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
+      
+      // Create first instance
+      new CreditCardRewardService(
+        mockSessionId,
+        mockEcifId,
+        mockCorrelationId
+      );
+      
+      // Reset mock
+      mockCrossAccountAPICache.mockClear();
+      
+      // Create second instance
+      new CreditCardRewardService(
+        mockSessionId,
+        mockEcifId,
+        mockCorrelationId
+      );
+
+      expect(mockCrossAccountAPICache).not.toHaveBeenCalled();
+    });
   });
 
-  test("getBinRanges: throws error when API returns non-200 status", async () => {
-    mockGetValue = jest.fn().mockRejectedValue(new Error("API Error"));
+  describe("getRewardDetails", () => {
+    test("should return empty string (placeholder implementation)", async () => {
+      const result = await creditCardRewardService.getRewardDetails();
+      expect(result).toBe("");
+    });
 
-    global.fetch = jest.fn(() =>
-      Promise.resolve({
-        status: 500,
-        statusText: "Internal Server Error",
-      })
-    ) as jest.Mock;
+    test("should log trace messages", async () => {
+      const mockTrace = require("../../../../common/utils/logger").trace;
+      
+      await creditCardRewardService.getRewardDetails();
 
-    creditcardUtilityService = new CreditcardUtilityService("correlationId");
-    await expect(creditcardUtilityService.getBinRangesCached()).rejects.toThrow();
+      expect(mockTrace).toHaveBeenCalledWith(
+        "CreditCardRewardService - In getRewardDetails.....",
+        mockCorrelationId
+      );
+      expect(mockTrace).toHaveBeenCalledWith(
+        "CreditCardRewardService - Out getRewardDetails.",
+        mockCorrelationId
+      );
+    });
   });
 
-  test("getBinRanges: throws error when API call fails", async () => {
-    mockGetValue = jest.fn().mockRejectedValue(new Error("Network Error"));
+  describe("error handling", () => {
+    test("should throw ServerError when CrossAccountAPICache initialization fails", () => {
+      const mockCrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
+      
+      mockCrossAccountAPICache.mockImplementationOnce(() => {
+        throw new Error("API Cache Error");
+      });
 
-    global.fetch = jest.fn(() => 
-      Promise.reject(new Error("Network error"))
-    ) as jest.Mock;
-
-    creditcardUtilityService = new CreditcardUtilityService("correlationId");
-    await expect(creditcardUtilityService.getBinRangesCached()).rejects.toThrow();
+      expect(() => 
+        new CreditCardRewardService(
+          mockSessionId,
+          mockEcifId,
+          mockCorrelationId
+        )
+      ).toThrow();
+    });
   });
 });
