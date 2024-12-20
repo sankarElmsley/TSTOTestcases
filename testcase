@@ -356,26 +356,30 @@ jest.mock("../../../../common/utils/logger", () => ({
   logBackendServiceResponse: jest.fn()
 }));
 
+// Create mock functions before mocking the modules
+const mockCrossAccountAPICache = jest.fn().mockImplementation(() => ({
+  value: jest.fn().mockResolvedValue({
+    apiKey: "mock-api-key",
+    apiGatewayId: "mock-gateway-id"
+  })
+}));
+
+const mockCognitoTokenCache = jest.fn().mockImplementation(() => ({
+  Value: jest.fn().mockResolvedValue("mock-cognito-token")
+}));
+
 // Mock CrossAccountAPICache
 jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    value: jest.fn().mockResolvedValue({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id"
-    })
-  }))
+  CrossAccountAPICache: mockCrossAccountAPICache
 }));
 
 // Mock CognitoTokenCache
 jest.mock("../../../../common/cognito/cached_cognito_token", () => ({
-  CognitoTokenCache: jest.fn().mockImplementation(() => ({
-    Value: jest.fn().mockResolvedValue("mock-cognito-token")
-  }))
+  CognitoTokenCache: mockCognitoTokenCache
 }));
 
 describe("CreditCardAccountEntryViewReportService", () => {
   beforeEach(() => {
-    jest.resetModules();
     jest.clearAllMocks();
     
     process.env = {
@@ -408,9 +412,9 @@ describe("CreditCardAccountEntryViewReportService", () => {
     });
 
     test("should handle apiInfoCache initialization failure", () => {
-      const CrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
-      CrossAccountAPICache.mockImplementation(() => {
-        throw new Error("Failed to initialize API cache");
+      // Mock the CrossAccountAPICache to throw an error
+      mockCrossAccountAPICache.mockImplementationOnce(() => {
+        throw new ServerError(ErrorCodes.INTERNAL_SERVER_ERROR, "Failed to initialize API cache");
       });
 
       expect(() => {
@@ -423,45 +427,36 @@ describe("CreditCardAccountEntryViewReportService", () => {
     });
 
     test("should handle cognitoTokenCache Value() failure", async () => {
-      const CognitoTokenCache = require("../../../../common/cognito/cached_cognito_token").CognitoTokenCache;
       const mockError = new Error("Failed to get Cognito token");
       
-      CognitoTokenCache.mockImplementation(() => ({
+      // Update the mock implementation for this specific test
+      mockCognitoTokenCache.mockImplementationOnce(() => ({
         Value: jest.fn().mockRejectedValue(mockError)
       }));
 
-      try {
-        await creditCardAccountEntryViewService.getPostedCCTransactions();
-        fail('Expected an error to be thrown');
-      } catch (error) {
-        expect(error).toBeDefined();
-      }
+      await expect(creditCardAccountEntryViewService.getPostedCCTransactions())
+        .rejects
+        .toThrow(mockError);
     });
   });
 
   describe("Caching behavior", () => {
     test("should initialize apiInfoCache only once", () => {
-      jest.isolateModules(() => {
-        const CrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
-        
-        // Create multiple instances
-        new CreditCardAccountEntryViewReportService(mockSessionId, mockEcifId, mockCorrelationId);
-        new CreditCardAccountEntryViewReportService(mockSessionId, mockEcifId, mockCorrelationId);
-        
-        expect(CrossAccountAPICache).toHaveBeenCalledTimes(1);
-      });
+      // Create multiple instances
+      new CreditCardAccountEntryViewReportService(mockSessionId, mockEcifId, mockCorrelationId);
+      new CreditCardAccountEntryViewReportService(mockSessionId, mockEcifId, mockCorrelationId);
+      
+      expect(mockCrossAccountAPICache).toHaveBeenCalledTimes(1);
     });
 
     test("should initialize cognitoTokenCache only when calling getPostedCCTransactions", async () => {
-      const CognitoTokenCache = require("../../../../common/cognito/cached_cognito_token").CognitoTokenCache;
-      
       // First call should initialize cache
       await creditCardAccountEntryViewService.getPostedCCTransactions();
-      expect(CognitoTokenCache).toHaveBeenCalledTimes(1);
+      expect(mockCognitoTokenCache).toHaveBeenCalledTimes(1);
 
       // Second call should use same cache
       await creditCardAccountEntryViewService.getPostedCCTransactions();
-      expect(CognitoTokenCache).toHaveBeenCalledTimes(1);
+      expect(mockCognitoTokenCache).toHaveBeenCalledTimes(1);
     });
   });
 });
