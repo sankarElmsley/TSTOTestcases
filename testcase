@@ -65,19 +65,13 @@ import fetch from 'node-fetch';
 
 import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
 
-import { TransientCreditcardDataService } from "../src/service/TransientCreditcardDataService";
-import { CdbContextService } from "../src/service/cdbContext/cdbContextService";
-import { CreditcardUtilityService } from "../src/service/ceu/creditcardUtilityService";
-import { ClientError } from "../src/util/clientError";
+import { CreditCardAccountEntryViewReportService } from "../src/service/ccaev/creditCardAccountEntryViewReportService";
 import { ServerError } from "../src/util/serverError";
-import ErrorCodes from "../src/util/errorCodes";
-import { CrossAccountAPICache } from "../common/cross_account/cached_api_information";
+import { ErrorCodes } from "../src/util/errorCodes";
 
-let transientCreditcardService: TransientCreditcardDataService;
-const mockEcifId = "test-ecif-123";
-const mockOcifId = "test-ocif-123";
+let creditCardAccountEntryViewService: CreditCardAccountEntryViewReportService;
 const mockSessionId = "test-session-123";
-const mockAccountIndex = 0;
+const mockEcifId = "test-ecif-123";
 const mockCorrelationId = "test-correlation-id";
 
 // Mock AWS SDK
@@ -104,361 +98,13 @@ jest.mock('@aws-sdk/client-ssm', () => ({
   }))
 }));
 
-// Mock the common/aws/sts module
-jest.mock("../../../../common/aws/sts", () => ({
-  AssumeRole: jest.fn().mockResolvedValue({
-    accessKeyId: "mock-access-key",
-    secretAccessKey: "mock-secret-key",
-    sessionToken: "mock-session-token"
-  })
-}));
-
-// Mock the common/aws/ssm module
-jest.mock("../../../../common/aws/ssm", () => ({
-  GetParamValue: jest.fn().mockResolvedValue("mock-param-value")
-}));
-
-// Mock response for successful case
-const mockSuccessResponse = {
-  data: {
-    accountNumber: "4500000000000001",
-    availableBalance: 5000,
-    totalBalance: 1000,
-    creditLimit: 6000,
-    transactions: []
-  }
-};
-
-// Mock session data response
-const mockSessionData = {
-  "mysummary/getMySummary": {
-    accounts: [
-      {
-        accountCategory: "CREDIT_CARD_ACCOUNTS",
-        accountNumber: "4500000000000001",
-        accountType: "Credit Card"
-      },
-      {
-        accountCategory: "CHECKING_ACCOUNTS",
-        accountNumber: "1234567890",
-        accountType: "Checking"
-      }
-    ]
-  }
-};
-
-// Mock bin ranges response
-const mockBinRanges = [
-  {
-    lowBIN: "450000",
-    highBIN: "450099",
-    LOB: "R"
-  }
-];
-
-// Mock all required services
-jest.mock("../src/service/cdbContext/cdbContextService");
-jest.mock("../src/service/ceu/creditcardUtilityService");
-jest.mock("../src/service/ccaev/creditCardAccountEntryViewService");
-jest.mock("../src/service/creditCardDetailSessionDataService");
-
-// Mock logger functions
-jest.mock("../common/utils/logger", () => ({
-  debug: jest.fn(),
-  debugWithSanitize: jest.fn(),
-  error: jest.fn(),
-  info: jest.fn(),
-  infoWithSanitize: jest.fn(),
-  trace: jest.fn(),
-  logBackendServiceError: jest.fn(),
-  logBackendServiceRequest: jest.fn(),
-  logBackendServiceResponse: jest.fn()
-}));
-
-describe("TransientCreditcardDataService", () => {
-  beforeEach(() => {
-    // Reset all mocks
-    jest.clearAllMocks();
-    
-    // Set up environment variables
-    process.env = {
-      AWS_REGION: "us-east-1",
-      AWS_SDK_LOAD_CONFIG: "1",
-      crossRegion: "us-east-1",
-      REGION: "us-east-1",
-      crossAccountRole: "test-role",
-      ssmParamApiKey: "test-api-key",
-      ssmParamGatewayId: "test-gateway-id",
-      getCardDetailsUrl: "https://test-api.bmo.com/v1/card-details"
-    };
-
-    // Mock the static apiInfoCache
-    Object.defineProperty(TransientCreditcardDataService, 'apiInfoCache', {
-      value: {
-        value: jest.fn().mockResolvedValue({
-          apiKey: "mock-api-key",
-          apiGatewayId: "mock-gateway-id"
-        })
-      },
-      writable: true
-    });
-
-    // Create new instance
-    transientCreditcardService = new TransientCreditcardDataService(
-      mockEcifId,
-      mockOcifId,
-      mockSessionId,
-      mockAccountIndex,
-      mockCorrelationId
-    );
-
-    // Mock CdbContextService
-    (CdbContextService as jest.Mock).mockImplementation(() => ({
-      getSessionData: jest.fn().mockResolvedValue({ data: mockSessionData })
-    }));
-
-    // Mock CreditcardUtilityService
-    (CreditcardUtilityService as jest.Mock).mockImplementation(() => ({
-      getBinRangesCached: jest.fn().mockResolvedValue(mockBinRanges)
-    }));
-
-    // Mock fetch
-    global.fetch = jest.fn(() =>
-      Promise.resolve({
-        status: 200,
-        json: () => Promise.resolve(mockSuccessResponse)
+jest.mock('@aws-sdk/client-secrets-manager', () => ({
+  SecretsManagerClient: jest.fn().mockImplementation(() => ({
+    send: jest.fn().mockResolvedValue({
+      SecretString: JSON.stringify({
+        clientId: 'mock-client-id',
+        clientSecret: 'mock-client-secret'
       })
-    ) as jest.Mock;
-  });
-
-  afterEach(() => {
-    jest.clearAllMocks();
-    // Clean up environment variables
-    process.env = {};
-    // Reset the static apiInfoCache
-    Object.defineProperty(TransientCreditcardDataService, 'apiInfoCache', {
-      value: null,
-      writable: true
-    });
-  });
-
-  describe("getCreditcardData", () => {
-    test("should fetch credit card data successfully", async () => {
-      const result = await transientCreditcardService.getCreditcardData();
-      
-      expect(result).toBeDefined();
-      expect(result.data).toBeDefined();
-      expect(result.data.accountNumber).toBe(mockSuccessResponse.data.accountNumber);
-      expect(global.fetch).toHaveBeenCalled();
-    });
-
-    test("should handle ClientError appropriately", async () => {
-      (CdbContextService as jest.Mock).mockImplementation(() => ({
-        getSessionData: jest.fn().mockRejectedValue(
-          new ClientError(
-            ErrorCodes.SESSION_DATA_MISSING_MYSUMMARY_AND_SIGNIN_VERIFICATION.errorMessage,
-            ErrorCodes.SESSION_DATA_MISSING_MYSUMMARY_AND_SIGNIN_VERIFICATION.errorCode
-          )
-        )
-      }));
-
-      const result = await transientCreditcardService.getCreditcardData();
-      
-      expect(result).toBeDefined();
-      expect(result.status).toBe("Failure");
-      expect(result.errorCode).toBe(
-        ErrorCodes.SESSION_DATA_MISSING_MYSUMMARY_AND_SIGNIN_VERIFICATION.errorCode
-      );
-    });
-
-    test("should handle ServerError appropriately", async () => {
-      (CdbContextService as jest.Mock).mockImplementation(() => ({
-        getSessionData: jest.fn().mockRejectedValue(
-          new ServerError("Server Error", "SERVER_ERROR")
-        )
-      }));
-
-      const result = await transientCreditcardService.getCreditcardData();
-      
-      expect(result).toBeDefined();
-      expect(result.status).toBe("Failure");
-      expect(result.errorCode).toBe("SERVER_ERROR");
-    });
-
-    test("should handle API non-200 response", async () => {
-      global.fetch = jest.fn(() =>
-        Promise.resolve({
-          status: 500,
-          statusText: "Internal Server Error"
-        })
-      ) as jest.Mock;
-
-      const result = await transientCreditcardService.getCreditcardData();
-      
-      expect(result).toBeDefined();
-      expect(result.status).toBe("Failure");
-      expect(result.statusCode).toBe(500);
-    });
-
-    test("should handle apiInfoCache value() failure", async () => {
-      Object.defineProperty(TransientCreditcardDataService, 'apiInfoCache', {
-        value: {
-          value: jest.fn().mockRejectedValue(new Error("Failed to get API info"))
-        },
-        writable: true
-      });
-
-      const result = await transientCreditcardService.getCreditcardData();
-      
-      expect(result).toBeDefined();
-      expect(result.status).toBe("Failure");
-      expect(result.statusCode).toBe(500);
-    });
-
-    test("should handle API network error", async () => {
-      global.fetch = jest.fn(() => 
-        Promise.reject(new Error("Network error"))
-      ) as jest.Mock;
-
-      const result = await transientCreditcardService.getCreditcardData();
-      
-      expect(result).toBeDefined();
-      expect(result.status).toBe("Failure");
-      expect(result.statusCode).toBe(500);
-    });
-  });
-
-  describe("filterCreditCardAccounts", () => {
-    test("should filter credit card accounts correctly", async () => {
-      const sessionData = {
-        "mysummary/getMySummary": {
-          accounts: [
-            {
-              accountCategory: "CREDIT_CARD_ACCOUNTS",
-              accountNumber: "4500000000000001"
-            },
-            {
-              accountCategory: "CHECKING_ACCOUNTS",
-              accountNumber: "1234567890"
-            }
-          ]
-        }
-      };
-
-      const result = (transientCreditcardService as any).filterCreditCardAccounts(sessionData);
-      
-      expect(result).toHaveLength(1);
-      expect(result[0].accountCategory).toBe("CREDIT_CARD_ACCOUNTS");
-      expect(result[0].accountNumber).toBe("4500000000000001");
-    });
-
-    test("should throw error when no session summary data available", async () => {
-      const sessionData = {};
-
-      expect(() => {
-        (transientCreditcardService as any).filterCreditCardAccounts(sessionData);
-      }).toThrow(ClientError);
-    });
-  });
-
-  describe("getCardNumber", () => {
-    test("should return correct card number for valid index", async () => {
-      const accounts = [
-        {
-          accountCategory: "CREDIT_CARD_ACCOUNTS",
-          accountNumber: "4500000000000001"
-        }
-      ];
-
-      const result = (transientCreditcardService as any).getCardNumber(accounts, 0);
-      
-      expect(result).toBe("4500000000000001");
-    });
-
-    test("should throw error when account index is out of range", async () => {
-      const accounts = [
-        {
-          accountCategory: "CREDIT_CARD_ACCOUNTS",
-          accountNumber: "4500000000000001"
-        }
-      ];
-
-      expect(() => {
-        (transientCreditcardService as any).getCardNumber(accounts, 1);
-      }).toThrow(ClientError);
-    });
-  });
-
-  describe("getCreditCardLOB", () => {
-    test("should return correct LOB for matching bin range", async () => {
-      const cardNumber = "4500000000000001";
-      (transientCreditcardService as any).binRanges = mockBinRanges;
-
-      const result = (transientCreditcardService as any).getCreditCardLOB(cardNumber);
-      
-      expect(result).toBe("R");
-    });
-
-    test("should return empty string for non-matching bin range", async () => {
-      const cardNumber = "5500000000000001";
-      (transientCreditcardService as any).binRanges = mockBinRanges;
-
-      const result = (transientCreditcardService as any).getCreditCardLOB(cardNumber);
-      
-      expect(result).toBe("");
-    });
-  });
-});
-
-
-
-
-
-
-
-import { TransientCreditcardDataService } from "../src/service/TransientCreditcardDataService";
-import { CdbContextService } from "../src/service/cdbContext/cdbContextService";
-import { CreditcardUtilityService } from "../src/service/ceu/creditcardUtilityService";
-import { ClientError } from "../src/util/clientError";
-import { ServerError } from "../src/util/serverError";
-import ErrorCodes from "../src/util/errorCodes";
-
-let transientCreditcardService: TransientCreditcardDataService;
-const mockEcifId = "test-ecif-123";
-const mockOcifId = "test-ocif-123";
-const mockSessionId = "test-session-123";
-const mockAccountIndex = 0;
-const mockCorrelationId = "test-correlation-id";
-
-const mockSuccessResponse = {
-  data: {
-    accountNumber: "4500000000000001",
-    availableBalance: 5000,
-    totalBalance: 1000,
-    creditLimit: 6000
-  }
-};
-
-// Mock AWS SDK
-jest.mock('@aws-sdk/client-sts', () => ({
-  STSClient: jest.fn().mockImplementation(() => ({
-    send: jest.fn().mockResolvedValue({
-      Credentials: {
-        AccessKeyId: 'mock-access-key',
-        SecretAccessKey: 'mock-secret-key',
-        SessionToken: 'mock-session-token',
-        Expiration: new Date()
-      }
-    })
-  }))
-}));
-
-jest.mock('@aws-sdk/client-ssm', () => ({
-  SSMClient: jest.fn().mockImplementation(() => ({
-    send: jest.fn().mockResolvedValue({
-      Parameter: {
-        Value: 'mock-param-value'
-      }
     })
   }))
 }));
@@ -490,13 +136,24 @@ jest.mock("../../../../common/utils/logger", () => ({
   logBackendServiceResponse: jest.fn()
 }));
 
-// Mock all required services
-jest.mock("../src/service/cdbContext/cdbContextService");
-jest.mock("../src/service/ceu/creditcardUtilityService");
-jest.mock("../src/service/ccaev/creditCardAccountEntryViewService");
-jest.mock("../src/service/creditCardDetailSessionDataService");
+// Mock CrossAccountAPICache
+jest.mock("../../../../common/cross_account/cached_api_information", () => ({
+  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+    value: jest.fn().mockResolvedValue({
+      apiKey: "mock-api-key",
+      apiGatewayId: "mock-gateway-id"
+    })
+  }))
+}));
 
-describe("TransientCreditcardDataService", () => {
+// Mock CognitoTokenCache
+jest.mock("../../../../common/cognito/cached_cognito_token", () => ({
+  CognitoTokenCache: jest.fn().mockImplementation(() => ({
+    Value: jest.fn().mockResolvedValue("mock-cognito-token")
+  }))
+}));
+
+describe("CreditCardAccountEntryViewReportService", () => {
   beforeEach(() => {
     // Reset all mocks
     jest.clearAllMocks();
@@ -507,108 +164,145 @@ describe("TransientCreditcardDataService", () => {
       AWS_SDK_LOAD_CONFIG: "1",
       crossRegion: "us-east-1",
       REGION: "us-east-1",
-      crossAccountRole: "test-role",
-      ssmParamApiKey: "test-api-key",
-      ssmParamGatewayId: "test-gateway-id",
-      getCardDetailsUrl: "https://test-api.bmo.com/v1/card-details"
+      crossAccountRoleForCdbContext: "test-role",
+      ssmParamCdbContextApiKey: "test-api-key",
+      ssmParamCdbContextGatewayId: "test-gateway-id",
+      cachedCognitoTokenSecretName: "test-cognito-secret",
+      awsProxySgUx: "test-proxy-url",
+      cognitoSecretArn: "test-secret-arn"
     };
 
-    // Mock the static apiInfoCache
-    Object.defineProperty(TransientCreditcardDataService, 'apiInfoCache', {
-      value: {
-        value: jest.fn().mockResolvedValue({
-          apiKey: "mock-param-value",
-          apiGatewayId: "mock-param-value"
-        })
-      },
-      writable: true
-    });
-
     // Create new instance
-    transientCreditcardService = new TransientCreditcardDataService(
-      mockEcifId,
-      mockOcifId,
+    creditCardAccountEntryViewService = new CreditCardAccountEntryViewReportService(
       mockSessionId,
-      mockAccountIndex,
+      mockEcifId,
       mockCorrelationId
     );
-
-    // Mock CdbContextService
-    (CdbContextService as jest.Mock).mockImplementation(() => ({
-      getSessionData: jest.fn().mockResolvedValue({ data: mockSessionData })
-    }));
-
-    // Mock CreditcardUtilityService
-    (CreditcardUtilityService as jest.Mock).mockImplementation(() => ({
-      getBinRangesCached: jest.fn().mockResolvedValue(mockBinRanges)
-    }));
-
-    // Mock fetch
-    global.fetch = jest.fn(() =>
-      Promise.resolve({
-        status: 200,
-        json: () => Promise.resolve(mockSuccessResponse)
-      })
-    ) as jest.Mock;
   });
 
   afterEach(() => {
     jest.clearAllMocks();
-    // Reset the static apiInfoCache
-    Object.defineProperty(TransientCreditcardDataService, 'apiInfoCache', {
-      value: null,
-      writable: true
-    });
     // Clean up environment variables
     process.env = {};
   });
 
-  describe("getCreditcardData", () => {
-    test("should fetch credit card data successfully", async () => {
-      const result = await transientCreditcardService.getCreditcardData();
-      
+  describe("getPostedCCTransactions", () => {
+    test("should fetch posted transactions successfully", async () => {
+      const result = await creditCardAccountEntryViewService.getPostedCCTransactions();
       expect(result).toBeDefined();
-      expect(result.data).toBeDefined();
-      expect(result.data.accountNumber).toBe(mockSuccessResponse.data.accountNumber);
-      expect(global.fetch).toHaveBeenCalled();
     });
 
-    test("should handle API non-200 response", async () => {
-      global.fetch = jest.fn(() =>
-        Promise.resolve({
-          status: 500,
-          statusText: "Internal Server Error"
-        })
-      ) as jest.Mock;
-
-      const result = await transientCreditcardService.getCreditcardData();
-      expect(result.status).toBe("Failure");
-      expect(result.statusCode).toBe(500);
-    });
-
-    test("should handle network error", async () => {
-      global.fetch = jest.fn(() => 
-        Promise.reject(new Error("Network error"))
-      ) as jest.Mock;
-
-      const result = await transientCreditcardService.getCreditcardData();
-      expect(result.status).toBe("Failure");
-      expect(result.statusCode).toBe(500);
-    });
-
-    test("should handle apiInfoCache.value() failure", async () => {
-      Object.defineProperty(TransientCreditcardDataService, 'apiInfoCache', {
-        value: {
-          value: jest.fn().mockRejectedValue(new Error("Cache error"))
-        },
-        writable: true
+    test("should handle apiInfoCache initialization failure", async () => {
+      // Mock CrossAccountAPICache constructor to throw
+      const CrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
+      CrossAccountAPICache.mockImplementationOnce(() => {
+        throw new Error("Failed to initialize API cache");
       });
 
-      const result = await transientCreditcardService.getCreditcardData();
-      expect(result.status).toBe("Failure");
-      expect(result.statusCode).toBe(500);
+      // Create new instance to trigger error
+      expect(() => {
+        new CreditCardAccountEntryViewReportService(
+          mockSessionId,
+          mockEcifId,
+          mockCorrelationId
+        );
+      }).toThrow(ServerError);
+    });
+
+    test("should handle cognitoTokenCache initialization failure", async () => {
+      // Mock CognitoTokenCache constructor to throw
+      const CognitoTokenCache = require("../../../../common/cognito/cached_cognito_token").CognitoTokenCache;
+      CognitoTokenCache.mockImplementationOnce(() => {
+        throw new Error("Failed to initialize Cognito cache");
+      });
+
+      await expect(creditCardAccountEntryViewService.getPostedCCTransactions())
+        .rejects
+        .toThrow();
+    });
+
+    test("should handle cognitoTokenCache.Value() failure", async () => {
+      // Mock CognitoTokenCache Value method to reject
+      const CognitoTokenCache = require("../../../../common/cognito/cached_cognito_token").CognitoTokenCache;
+      CognitoTokenCache.mockImplementationOnce(() => ({
+        Value: jest.fn().mockRejectedValue(new Error("Failed to get Cognito token"))
+      }));
+
+      await expect(creditCardAccountEntryViewService.getPostedCCTransactions())
+        .rejects
+        .toThrow();
+    });
+
+    test("should handle missing environment variables", async () => {
+      // Clear environment variables
+      process.env = {};
+
+      expect(() => {
+        new CreditCardAccountEntryViewReportService(
+          mockSessionId,
+          mockEcifId,
+          mockCorrelationId
+        );
+      }).not.toThrow();
     });
   });
 
-  // ... rest of your test cases for other methods
+  describe("Constructor initialization", () => {
+    test("should initialize with correct parameters", () => {
+      const service = new CreditCardAccountEntryViewReportService(
+        mockSessionId,
+        mockEcifId,
+        mockCorrelationId
+      );
+      expect(service).toBeDefined();
+    });
+
+    test("should handle missing required parameters", () => {
+      expect(() => {
+        new CreditCardAccountEntryViewReportService("", "", "");
+      }).not.toThrow();
+    });
+  });
+
+  describe("API information cache", () => {
+    test("should initialize apiInfoCache only once", () => {
+      const CrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
+      
+      // Create multiple instances
+      new CreditCardAccountEntryViewReportService(mockSessionId, mockEcifId, mockCorrelationId);
+      new CreditCardAccountEntryViewReportService(mockSessionId, mockEcifId, mockCorrelationId);
+      
+      // Should only be called once due to static cache
+      expect(CrossAccountAPICache).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("Cognito token cache", () => {
+    test("should initialize cognitoTokenCache only once", async () => {
+      const CognitoTokenCache = require("../../../../common/cognito/cached_cognito_token").CognitoTokenCache;
+      
+      // Call getPostedCCTransactions multiple times
+      await creditCardAccountEntryViewService.getPostedCCTransactions();
+      await creditCardAccountEntryViewService.getPostedCCTransactions();
+      
+      // Should only be called once due to static cache
+      expect(CognitoTokenCache).toHaveBeenCalledTimes(1);
+    });
+
+    test("should use cached cognito token for subsequent calls", async () => {
+      const CognitoTokenCache = require("../../../../common/cognito/cached_cognito_token").CognitoTokenCache;
+      const mockValue = jest.fn().mockResolvedValue("mock-token");
+      
+      CognitoTokenCache.mockImplementation(() => ({
+        Value: mockValue
+      }));
+
+      await creditCardAccountEntryViewService.getPostedCCTransactions();
+      await creditCardAccountEntryViewService.getPostedCCTransactions();
+
+      // Value should be called twice but constructor only once
+      expect(mockValue).toHaveBeenCalledTimes(2);
+      expect(CognitoTokenCache).toHaveBeenCalledTimes(1);
+    });
+  });
 });
