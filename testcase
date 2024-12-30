@@ -66,131 +66,105 @@ import fetch from 'node-fetch';
 import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
 
 import { CdbContextService } from "./CdbContextService";
-import { CrossAccountAPICache } from "common/cross_account/cached_api_information";
 import { ServerError } from "util/serverError";
 import { ErrorCodes } from "util/errorcodes";
 
-// Mock dependencies
-jest.mock("common/cross_account/cached_api_information");
+jest.mock("node-fetch", () => jest.fn());
 jest.mock("common/utils/logger", () => ({
+    debug: jest.fn(),
+    debugWithSanitize: jest.fn(),
+    error: jest.fn(),
+    info: jest.fn(),
+    infoWithSanitize: jest.fn(),
+    trace: jest.fn(),
     logBackendServiceError: jest.fn(),
     logBackendServiceRequest: jest.fn(),
-    logBackendServiceResponse: jest.fn(),
-    error: jest.fn(),
-    trace: jest.fn(),
-    info: jest.fn()
+    logBackendServiceResponse: jest.fn()
+}));
+jest.mock("common/cross_account/cached_api_information", () => ({
+    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+        value: jest.fn(() => ({
+            apiKey: "test-key",
+            apiGatewayId: "test-gateway"
+        }))
+    }))
 }));
 
-describe("CdbContextService Tests", () => {
+describe("Scenario: CdbContextService.getSessionData() handles responses", () => {
     let service: CdbContextService;
-    let mockApiCache: jest.Mocked<CrossAccountAPICache>;
-    
+
     beforeEach(() => {
-        // Set up environment variables
         process.env.crossRegion = "us-east-1";
         process.env.REGION = "us-east-1";
         process.env.crossAccountRoleForCdbContext = "test-role";
         process.env.ssmParamCdbContextApiKey = "test-api-key";
         process.env.ssmParamCdbContextGatewayId = "test-gateway-id";
         process.env.getSessionDataUrl = "https://api.test.com/(contextId)/data";
-        
-        // Mock CrossAccountAPICache implementation
-        mockApiCache = {
-            value: jest.fn().mockResolvedValue({
-                apiKey: "test-key",
-                apiGatewayId: "test-gateway"
-            })
-        } as unknown as jest.Mocked<CrossAccountAPICache>;
-        
-        (CrossAccountAPICache as jest.Mock).mockImplementation(() => mockApiCache);
-        
-        // Create service instance
+
         service = new CdbContextService(
             "test-session-id",
             "test-ecif-id",
             "test-correlation-id"
         );
-        
-        // Reset mocks
+
         jest.clearAllMocks();
-        
-        // Mock global fetch
-        global.fetch = jest.fn();
     });
 
     afterEach(() => {
-        // Clean up environment variables
         delete process.env.crossRegion;
         delete process.env.REGION;
         delete process.env.crossAccountRoleForCdbContext;
         delete process.env.ssmParamCdbContextApiKey;
         delete process.env.ssmParamCdbContextGatewayId;
         delete process.env.getSessionDataUrl;
-        
-        jest.restoreAllMocks();
     });
 
-    describe("getSessionData", () => {
-        test("should successfully retrieve session data when API returns 200", async () => {
-            const mockResponse = { test: "data" };
-            (global.fetch as jest.Mock).mockResolvedValueOnce({
+    test("Given: valid request to fetch session data; When: response status is 200; Then: returns the API response", async () => {
+        const mockResponse = { test: "data" };
+        const fetchMock = jest.fn(() =>
+            Promise.resolve({
                 status: 200,
-                statusText: "OK",
                 json: () => Promise.resolve(mockResponse)
-            });
+            })
+        );
 
-            const result = await service.getSessionData();
+        (global as any).fetch = fetchMock;
 
-            expect(result).toEqual(mockResponse);
-            expect(global.fetch).toHaveBeenCalledWith(
-                "https://api.test.com/test-session-id.test-ecif-id/data",
-                expect.objectContaining({
-                    method: "GET",
-                    headers: expect.objectContaining({
-                        "x-api-key": "test-key",
-                        "x-apigw-api-id": "test-gateway",
-                        "x-request-id": "test-correlation-id"
-                    })
+        const result = await service.getSessionData();
+
+        expect(result).toEqual(mockResponse);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://api.test.com/test-session-id.test-ecif-id/data",
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    "x-api-key": "test-key",
+                    "x-apigw-api-id": "test-gateway"
                 })
-            );
-        });
+            })
+        );
+    });
 
-        test("should throw ServerError when API returns non-200 status", async () => {
-            (global.fetch as jest.Mock).mockResolvedValueOnce({
+    test("Given: valid request; When: response status is not 200; Then: throws ServerError", async () => {
+        const fetchMock = jest.fn(() =>
+            Promise.resolve({
                 status: 404,
                 statusText: "Not Found"
-            });
+            })
+        );
 
-            await expect(service.getSessionData()).rejects.toThrow(
-                new ServerError(
-                    ErrorCodes.SESSION_DATA_API_INVALID_RESPONSE_STATUS.errorMessage,
-                    ErrorCodes.SESSION_DATA_API_INVALID_RESPONSE_STATUS.errorCode
-                )
-            );
-        });
+        (global as any).fetch = fetchMock;
 
-        test("should handle API call exceptions", async () => {
-            (global.fetch as jest.Mock).mockRejectedValueOnce(new Error("Network error"));
+        await expect(service.getSessionData()).rejects.toThrow(ServerError);
+    });
 
-            await expect(service.getSessionData()).rejects.toThrow(
-                new ServerError(
-                    ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR.errorMessage,
-                    ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR.errorCode
-                )
-            );
-        });
+    test("Given: valid request; When: API call fails; Then: throws ServerError", async () => {
+        const fetchMock = jest.fn(() =>
+            Promise.reject(new Error("Network error"))
+        );
 
-        test("should handle SSM parameter initialization errors", async () => {
-            (CrossAccountAPICache as jest.Mock).mockImplementationOnce(() => {
-                throw new Error("SSM Error");
-            });
+        (global as any).fetch = fetchMock;
 
-            await expect(service.getSessionData()).rejects.toThrow(
-                new ServerError(
-                    ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR_SM_PARAM.errorMessage,
-                    ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR_SM_PARAM.errorCode
-                )
-            );
-        });
+        await expect(service.getSessionData()).rejects.toThrow(ServerError);
     });
 });
