@@ -68,6 +68,7 @@ import { CreditCardArrangementReportService } from "../src/service/ccar/creditCa
 import { CdbContextService } from "./CdbContextService";
 import { CrossAccountAPICache } from "common/cross_account/cached_api_information";
 import { ServerError } from "util/serverError";
+import { ErrorCodes } from "util/errorcodes";
 
 // Mock dependencies
 jest.mock("common/cross_account/cached_api_information");
@@ -82,6 +83,7 @@ jest.mock("common/utils/logger", () => ({
 
 describe("CdbContextService Tests", () => {
     let service: CdbContextService;
+    let mockApiCache: jest.Mocked<CrossAccountAPICache>;
     
     beforeEach(() => {
         // Set up environment variables
@@ -92,6 +94,16 @@ describe("CdbContextService Tests", () => {
         process.env.ssmParamCdbContextGatewayId = "test-gateway-id";
         process.env.getSessionDataUrl = "https://api.test.com/(contextId)/data";
         
+        // Mock CrossAccountAPICache implementation
+        mockApiCache = {
+            value: jest.fn().mockResolvedValue({
+                apiKey: "test-key",
+                apiGatewayId: "test-gateway"
+            })
+        } as unknown as jest.Mocked<CrossAccountAPICache>;
+        
+        (CrossAccountAPICache as jest.Mock).mockImplementation(() => mockApiCache);
+        
         // Create service instance
         service = new CdbContextService(
             "test-session-id",
@@ -101,6 +113,9 @@ describe("CdbContextService Tests", () => {
         
         // Reset mocks
         jest.clearAllMocks();
+        
+        // Mock global fetch
+        global.fetch = jest.fn();
     });
 
     afterEach(() => {
@@ -111,79 +126,71 @@ describe("CdbContextService Tests", () => {
         delete process.env.ssmParamCdbContextApiKey;
         delete process.env.ssmParamCdbContextGatewayId;
         delete process.env.getSessionDataUrl;
+        
+        jest.restoreAllMocks();
     });
 
     describe("getSessionData", () => {
         test("should successfully retrieve session data when API returns 200", async () => {
-            // Mock CrossAccountAPICache
-            (CrossAccountAPICache as jest.Mock).mockImplementation(() => ({
-                value: jest.fn().mockResolvedValue({
-                    apiKey: "test-key",
-                    apiGatewayId: "test-gateway"
-                })
-            }));
-
-            // Mock fetch response
             const mockResponse = { test: "data" };
-            global.fetch = jest.fn().mockResolvedValue({
+            (global.fetch as jest.Mock).mockResolvedValueOnce({
                 status: 200,
+                statusText: "OK",
                 json: () => Promise.resolve(mockResponse)
             });
 
             const result = await service.getSessionData();
 
             expect(result).toEqual(mockResponse);
-            expect(fetch).toHaveBeenCalledWith(
-                expect.stringContaining("test-session-id.test-ecif-id"),
+            expect(global.fetch).toHaveBeenCalledWith(
+                "https://api.test.com/test-session-id.test-ecif-id/data",
                 expect.objectContaining({
+                    method: "GET",
                     headers: expect.objectContaining({
                         "x-api-key": "test-key",
-                        "x-apigw-api-id": "test-gateway"
+                        "x-apigw-api-id": "test-gateway",
+                        "x-request-id": "test-correlation-id"
                     })
                 })
             );
         });
 
         test("should throw ServerError when API returns non-200 status", async () => {
-            // Mock CrossAccountAPICache
-            (CrossAccountAPICache as jest.Mock).mockImplementation(() => ({
-                value: jest.fn().mockResolvedValue({
-                    apiKey: "test-key",
-                    apiGatewayId: "test-gateway"
-                })
-            }));
-
-            // Mock fetch response with error status
-            global.fetch = jest.fn().mockResolvedValue({
+            (global.fetch as jest.Mock).mockResolvedValueOnce({
                 status: 404,
                 statusText: "Not Found"
             });
 
-            await expect(service.getSessionData()).rejects.toThrow(ServerError);
+            await expect(service.getSessionData()).rejects.toThrow(
+                new ServerError(
+                    ErrorCodes.SESSION_DATA_API_INVALID_RESPONSE_STATUS.errorMessage,
+                    ErrorCodes.SESSION_DATA_API_INVALID_RESPONSE_STATUS.errorCode
+                )
+            );
         });
 
         test("should handle API call exceptions", async () => {
-            // Mock CrossAccountAPICache
-            (CrossAccountAPICache as jest.Mock).mockImplementation(() => ({
-                value: jest.fn().mockResolvedValue({
-                    apiKey: "test-key",
-                    apiGatewayId: "test-gateway"
-                })
-            }));
+            (global.fetch as jest.Mock).mockRejectedValueOnce(new Error("Network error"));
 
-            // Mock fetch to throw error
-            global.fetch = jest.fn().mockRejectedValue(new Error("Network error"));
-
-            await expect(service.getSessionData()).rejects.toThrow(ServerError);
+            await expect(service.getSessionData()).rejects.toThrow(
+                new ServerError(
+                    ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR.errorMessage,
+                    ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR.errorCode
+                )
+            );
         });
 
         test("should handle SSM parameter initialization errors", async () => {
-            // Mock CrossAccountAPICache to throw error
-            (CrossAccountAPICache as jest.Mock).mockImplementation(() => {
+            (CrossAccountAPICache as jest.Mock).mockImplementationOnce(() => {
                 throw new Error("SSM Error");
             });
 
-            await expect(service.getSessionData()).rejects.toThrow(ServerError);
+            await expect(service.getSessionData()).rejects.toThrow(
+                new ServerError(
+                    ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR_SM_PARAM.errorMessage,
+                    ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR_SM_PARAM.errorCode
+                )
+            );
         });
     });
 });
