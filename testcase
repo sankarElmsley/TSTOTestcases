@@ -79,19 +79,18 @@ jest.mock("common/utils/logger", () => ({
     logBackendServiceResponse: jest.fn()
 }));
 
-// Mock CrossAccountAPICache as a class with getValue method
-const mockValue = jest.fn().mockResolvedValue({
+const mockGetValue = jest.fn().mockResolvedValue({
     apiKey: "test-key",
     apiGatewayId: "test-gateway"
 });
 
-class MockCrossAccountAPICache {
-    getValue = mockValue;
-}
-
-jest.mock("common/cross_account/cached_api_information", () => ({
-    CrossAccountAPICache: jest.fn().mockImplementation(() => new MockCrossAccountAPICache())
-}));
+jest.mock("common/cross_account/cached_api_information", () => {
+    return {
+        CrossAccountAPICache: jest.fn().mockImplementation(() => {
+            return { getValue: mockGetValue };
+        })
+    };
+});
 
 describe("Scenario: CdbContextService.getSessionData() handles responses", () => {
     let service: CdbContextService;
