@@ -68,7 +68,6 @@ import { CreditCardArrangementReportService } from "../src/service/ccar/creditCa
 import { CdbContextService } from "./CdbContextService";
 import { ServerError } from "util/serverError";
 
-// Mock logger
 jest.mock("common/utils/logger", () => ({
     debug: jest.fn(),
     error: jest.fn(),
@@ -79,16 +78,16 @@ jest.mock("common/utils/logger", () => ({
     logBackendServiceResponse: jest.fn()
 }));
 
-// Mock CrossAccountAPICache
-const mockGetValue = jest.fn().mockResolvedValue({
-    apiKey: "test-key",
-    apiGatewayId: "test-gateway"
-});
+// Mock CrossAccountAPICache with static implementation
+let staticApiInfoCache = {
+    getValue: jest.fn().mockResolvedValue({
+        apiKey: "test-key",
+        apiGatewayId: "test-gateway"
+    })
+};
 
 jest.mock("common/cross_account/cached_api_information", () => ({
-    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-        getValue: mockGetValue
-    }))
+    CrossAccountAPICache: jest.fn().mockImplementation(() => staticApiInfoCache)
 }));
 
 describe("CdbContextService Tests", () => {
@@ -101,6 +100,12 @@ describe("CdbContextService Tests", () => {
         process.env.ssmParamCdbContextApiKey = "test-api-key";
         process.env.ssmParamCdbContextGatewayId = "test-gateway-id";
         process.env.getSessionDataUrl = "https://api.test.com/(contextId)/data";
+
+        // Reset mock implementation
+        staticApiInfoCache.getValue.mockResolvedValue({
+            apiKey: "test-key",
+            apiGatewayId: "test-gateway"
+        });
 
         service = new CdbContextService(
             "test-session-id",
