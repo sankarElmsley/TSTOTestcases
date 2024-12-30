@@ -63,9 +63,59 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
+// Mock modules before importing anything
+jest.mock('node:http', () => ({}));
+jest.mock('node:https', () => ({}));
+jest.mock('node:url', () => ({}));
+jest.mock('node:stream', () => ({}));
+jest.mock('node:buffer', () => ({}));
+
+// Mock node-fetch
+const mockFetchResponse = {
+  status: 200,
+  json: () => Promise.resolve({})
+};
+const mockFetch = jest.fn(() => Promise.resolve(mockFetchResponse));
+jest.mock('node-fetch', () => mockFetch);
+
 import { CreditCardAccountEntryViewReportService } from "../src/service/ccaev/creditCardAccountEntryViewReportService";
 import { CrossAccountAPICache } from "../../../common/cross_account/cached_api_information";
 import { CognitoTokenCache } from "../../../common/cognito/cached_cognito_token";
+
+// Mock AWS SDK modules
+jest.mock('@aws-sdk/client-secrets-manager', () => ({
+  SecretsManagerClient: jest.fn(() => ({
+    send: jest.fn().mockResolvedValue({
+      SecretString: JSON.stringify({
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret'
+      })
+    })
+  }))
+}));
+
+jest.mock('@aws-sdk/client-sts', () => ({
+  STSClient: jest.fn(() => ({
+    send: jest.fn().mockResolvedValue({
+      Credentials: {
+        AccessKeyId: 'mock-access-key',
+        SecretAccessKey: 'mock-secret-key',
+        SessionToken: 'mock-session-token',
+        Expiration: new Date()
+      }
+    })
+  }))
+}));
+
+jest.mock('@aws-sdk/client-ssm', () => ({
+  SSMClient: jest.fn(() => ({
+    send: jest.fn().mockResolvedValue({
+      Parameter: {
+        Value: 'mock-param-value'
+      }
+    })
+  }))
+}));
 
 // Mock the CrossAccountAPICache
 jest.mock("../../../common/cross_account/cached_api_information");
@@ -136,6 +186,14 @@ describe('CreditCardAccountEntryViewReportService', () => {
 
     describe('getPostedCCTransactions', () => {
         it('should successfully retrieve posted transactions', async () => {
+            const mockResponse = { data: 'test-data' };
+            mockFetch.mockImplementationOnce(() => 
+                Promise.resolve({
+                    status: 200,
+                    json: () => Promise.resolve(mockResponse)
+                })
+            );
+
             const result = await service.getPostedCCTransactions();
             expect(result).toBeDefined();
             expect(MockedCognitoTokenCache.prototype.Value).toHaveBeenCalled();
