@@ -63,113 +63,126 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
+import { CreditCardAccountEntryViewReportService } from "../src/service/ccaev/creditCardAccountEntryViewReportService";
+import { CrossAccountAPICache } from "../../../common/cross_account/cached_api_information";
+import { CognitoTokenCache } from "../../../common/cognito/cached_cognito_token";
 
-import { CdbContextService } from "./CdbContextService";
-import { ServerError } from "util/serverError";
+// Mock the CrossAccountAPICache
+jest.mock("../../../common/cross_account/cached_api_information");
+const MockedCrossAccountAPICache = CrossAccountAPICache as jest.MockedClass<typeof CrossAccountAPICache>;
 
-jest.mock("common/utils/logger", () => ({
-    debug: jest.fn(),
-    error: jest.fn(),
-    info: jest.fn(),
-    trace: jest.fn(),
+// Mock the CognitoTokenCache
+jest.mock("../../../common/cognito/cached_cognito_token");
+const MockedCognitoTokenCache = CognitoTokenCache as jest.MockedClass<typeof CognitoTokenCache>;
+
+// Mock logger functions
+jest.mock("../../../common/utils/logger", () => ({
     logBackendServiceError: jest.fn(),
     logBackendServiceRequest: jest.fn(),
-    logBackendServiceResponse: jest.fn()
+    logBackendServiceResponse: jest.fn(),
+    error: jest.fn(),
+    trace: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
 }));
 
-// Mock CrossAccountAPICache with static implementation
-let staticApiInfoCache = {
-    getValue: jest.fn().mockResolvedValue({
-        apiKey: "test-key",
-        apiGatewayId: "test-gateway"
-    })
-};
-
-jest.mock("common/cross_account/cached_api_information", () => ({
-    CrossAccountAPICache: jest.fn().mockImplementation(() => staticApiInfoCache)
-}));
-
-describe("CdbContextService Tests", () => {
-    let service: CdbContextService;
+describe('CreditCardAccountEntryViewReportService', () => {
+    const mockSessionId = 'test-session-123';
+    const mockEcifId = 'test-ecif-456';
+    const mockCorrelationId = 'test-correlation-789';
+    let service: CreditCardAccountEntryViewReportService;
 
     beforeEach(() => {
-        process.env.crossRegion = "us-east-1";
-        process.env.REGION = "us-east-1";
-        process.env.crossAccountRoleForCdbContext = "test-role";
-        process.env.ssmParamCdbContextApiKey = "test-api-key";
-        process.env.ssmParamCdbContextGatewayId = "test-gateway-id";
-        process.env.getSessionDataUrl = "https://api.test.com/(contextId)/data";
-
-        // Reset mock implementation
-        staticApiInfoCache.getValue.mockResolvedValue({
-            apiKey: "test-key",
-            apiGatewayId: "test-gateway"
-        });
-
-        service = new CdbContextService(
-            "test-session-id",
-            "test-ecif-id",
-            "test-correlation-id"
-        );
-
+        // Reset all mocks
         jest.clearAllMocks();
+
+        // Set up environment variables
+        process.env = {
+            crossRegion: 'us-east-1',
+            REGION: 'us-east-1',
+            crossAccountRoleForCdbContext: 'test-role',
+            ssmParamCdbContextApiKey: 'test-api-key',
+            ssmParamCdbContextGatewayId: 'test-gateway-id',
+            cachedCognitoTokenSecretName: 'test-cognito-secret',
+            awsProxySgUx: 'http://test-proxy',
+            cognitoSecretArn: 'test-secret-arn'
+        };
+
+        // Mock CrossAccountAPICache implementation
+        MockedCrossAccountAPICache.mockImplementation(() => ({
+            Value: jest.fn().mockResolvedValue({
+                apiKey: 'mock-api-key',
+                apiGatewayId: 'mock-gateway-id'
+            })
+        } as unknown as CrossAccountAPICache));
+
+        // Mock CognitoTokenCache implementation
+        MockedCognitoTokenCache.mockImplementation(() => ({
+            Value: jest.fn().mockResolvedValue('mock-cognito-token')
+        } as unknown as CognitoTokenCache));
+
+        // Create new instance of service
+        service = new CreditCardAccountEntryViewReportService(
+            mockSessionId,
+            mockEcifId,
+            mockCorrelationId
+        );
     });
 
     afterEach(() => {
-        delete process.env.crossRegion;
-        delete process.env.REGION;
-        delete process.env.crossAccountRoleForCdbContext;
-        delete process.env.ssmParamCdbContextApiKey;
-        delete process.env.ssmParamCdbContextGatewayId;
-        delete process.env.getSessionDataUrl;
+        jest.clearAllMocks();
+        process.env = {};
     });
 
-    test("Given: valid request to fetch session data; When: response status is 200; Then: returns the API response", async () => {
-        const mockResponse = { test: "data" };
-        const fetchMock = jest.fn(() =>
-            Promise.resolve({
-                status: 200,
-                json: () => Promise.resolve(mockResponse)
-            })
-        );
+    describe('getPostedCCTransactions', () => {
+        it('should successfully retrieve posted transactions', async () => {
+            const result = await service.getPostedCCTransactions();
+            expect(result).toBeDefined();
+            expect(MockedCognitoTokenCache.prototype.Value).toHaveBeenCalled();
+        });
 
-        (global as any).fetch = fetchMock;
+        it('should handle missing environment variables', async () => {
+            process.env = {};
+            
+            const serviceWithNoEnv = new CreditCardAccountEntryViewReportService(
+                mockSessionId,
+                mockEcifId,
+                mockCorrelationId
+            );
 
-        const result = await service.getSessionData();
+            const result = await serviceWithNoEnv.getPostedCCTransactions();
+            expect(result).toBeDefined();
+        });
 
-        expect(result).toEqual(mockResponse);
-        expect(fetchMock).toHaveBeenCalledWith(
-            "https://api.test.com/test-session-id.test-ecif-id/data",
-            expect.objectContaining({
-                headers: expect.objectContaining({
-                    "x-api-key": "test-key",
-                    "x-apigw-api-id": "test-gateway"
-                })
-            })
-        );
+        it('should handle CognitoTokenCache errors', async () => {
+            MockedCognitoTokenCache.mockImplementation(() => ({
+                Value: jest.fn().mockRejectedValue(new Error('Cognito token error'))
+            } as unknown as CognitoTokenCache));
+
+            await expect(service.getPostedCCTransactions())
+                .rejects
+                .toThrow();
+        });
     });
 
-    test("Given: valid request; When: response status is not 200; Then: throws ServerError", async () => {
-        const fetchMock = jest.fn(() =>
-            Promise.resolve({
-                status: 404,
-                statusText: "Not Found"
-            })
-        );
+    describe('initialization', () => {
+        it('should properly initialize with valid parameters', () => {
+            expect(service).toBeDefined();
+            expect(MockedCrossAccountAPICache).toHaveBeenCalled();
+        });
 
-        (global as any).fetch = fetchMock;
+        it('should handle CrossAccountAPICache initialization errors', () => {
+            MockedCrossAccountAPICache.mockImplementation(() => {
+                throw new Error('API Cache initialization error');
+            });
 
-        await expect(service.getSessionData()).rejects.toThrow(ServerError);
-    });
-
-    test("Given: valid request; When: API call fails; Then: throws ServerError", async () => {
-        const fetchMock = jest.fn(() =>
-            Promise.reject(new Error("Network error"))
-        );
-
-        (global as any).fetch = fetchMock;
-
-        await expect(service.getSessionData()).rejects.toThrow(ServerError);
+            expect(() => {
+                new CreditCardAccountEntryViewReportService(
+                    mockSessionId,
+                    mockEcifId,
+                    mockCorrelationId
+                );
+            }).toThrow();
+        });
     });
 });
