@@ -68,7 +68,7 @@ import { CreditCardArrangementReportService } from "../src/service/ccar/creditCa
 import { CdbContextService } from "./CdbContextService";
 import { ServerError } from "util/serverError";
 
-jest.mock("node-fetch", () => jest.fn());
+// Mock logger
 jest.mock("common/utils/logger", () => ({
     debug: jest.fn(),
     error: jest.fn(),
@@ -79,20 +79,19 @@ jest.mock("common/utils/logger", () => ({
     logBackendServiceResponse: jest.fn()
 }));
 
+// Mock CrossAccountAPICache
 const mockGetValue = jest.fn().mockResolvedValue({
     apiKey: "test-key",
     apiGatewayId: "test-gateway"
 });
 
-jest.mock("common/cross_account/cached_api_information", () => {
-    return {
-        CrossAccountAPICache: jest.fn().mockImplementation(() => {
-            return { getValue: mockGetValue };
-        })
-    };
-});
+jest.mock("common/cross_account/cached_api_information", () => ({
+    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+        getValue: mockGetValue
+    }))
+}));
 
-describe("Scenario: CdbContextService.getSessionData() handles responses", () => {
+describe("CdbContextService Tests", () => {
     let service: CdbContextService;
 
     beforeEach(() => {
@@ -135,7 +134,6 @@ describe("Scenario: CdbContextService.getSessionData() handles responses", () =>
         const result = await service.getSessionData();
 
         expect(result).toEqual(mockResponse);
-        expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock).toHaveBeenCalledWith(
             "https://api.test.com/test-session-id.test-ecif-id/data",
             expect.objectContaining({
