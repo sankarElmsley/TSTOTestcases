@@ -63,11 +63,9 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-// Create mock module for node-fetch
-const nodeFetch = jest.fn();
-jest.mock('node-fetch', () => ({
-    __esModule: true,
-    default: nodeFetch
+// Mock the GetCognitoToken module first
+jest.mock("../../common/cognito/get_cognito_token", () => ({
+    GetCognitoToken: jest.fn().mockResolvedValue('mock-token')
 }));
 
 import { CreditCardAccountEntryViewReportService } from "../../src/service/ccaev/creditCardAccountEntryViewReportService";
@@ -75,10 +73,9 @@ import { CrossAccountAPICache } from "../../common/cross_account/cached_api_info
 import { CognitoTokenCache } from "../../common/cognito/cached_cognito_token";
 
 // Mock AWS SDK modules
-const mockSend = jest.fn();
 jest.mock('@aws-sdk/client-secrets-manager', () => ({
     SecretsManagerClient: jest.fn().mockImplementation(() => ({
-        send: mockSend.mockResolvedValue({
+        send: jest.fn().mockResolvedValue({
             SecretString: JSON.stringify({
                 clientId: 'test-client-id',
                 clientSecret: 'test-client-secret'
@@ -129,6 +126,14 @@ jest.mock("../../common/utils/logger", () => ({
     debug: jest.fn(),
 }));
 
+// Mock global fetch
+global.fetch = jest.fn(() =>
+    Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({})
+    })
+) as jest.Mock;
+
 describe('CreditCardAccountEntryViewReportService', () => {
     const mockSessionId = 'test-session-123';
     const mockEcifId = 'test-ecif-456';
@@ -138,15 +143,6 @@ describe('CreditCardAccountEntryViewReportService', () => {
     beforeEach(() => {
         // Reset all mocks
         jest.clearAllMocks();
-
-        // Reset node-fetch mock
-        nodeFetch.mockReset();
-        nodeFetch.mockImplementation(() => 
-            Promise.resolve({
-                status: 200,
-                json: () => Promise.resolve({})
-            })
-        );
 
         // Set up environment variables
         process.env = {
@@ -173,6 +169,15 @@ describe('CreditCardAccountEntryViewReportService', () => {
             Value: jest.fn().mockResolvedValue('mock-cognito-token')
         } as unknown as CognitoTokenCache));
 
+        // Reset fetch mock
+        (global.fetch as jest.Mock).mockReset();
+        (global.fetch as jest.Mock).mockImplementation(() =>
+            Promise.resolve({
+                status: 200,
+                json: () => Promise.resolve({})
+            })
+        );
+
         // Create new instance of service
         service = new CreditCardAccountEntryViewReportService(
             mockSessionId,
@@ -189,7 +194,7 @@ describe('CreditCardAccountEntryViewReportService', () => {
     describe('getPostedCCTransactions', () => {
         it('should successfully retrieve posted transactions', async () => {
             const mockResponse = { data: 'test-data' };
-            nodeFetch.mockImplementationOnce(() => 
+            (global.fetch as jest.Mock).mockImplementationOnce(() =>
                 Promise.resolve({
                     status: 200,
                     json: () => Promise.resolve(mockResponse)
