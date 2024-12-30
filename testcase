@@ -67,27 +67,30 @@ import { CreditCardArrangementReportService } from "../src/service/ccar/creditCa
 
 import { CdbContextService } from "./CdbContextService";
 import { ServerError } from "util/serverError";
-import { ErrorCodes } from "util/errorcodes";
 
 jest.mock("node-fetch", () => jest.fn());
 jest.mock("common/utils/logger", () => ({
     debug: jest.fn(),
-    debugWithSanitize: jest.fn(),
     error: jest.fn(),
     info: jest.fn(),
-    infoWithSanitize: jest.fn(),
     trace: jest.fn(),
     logBackendServiceError: jest.fn(),
     logBackendServiceRequest: jest.fn(),
     logBackendServiceResponse: jest.fn()
 }));
+
+// Mock CrossAccountAPICache as a class with getValue method
+const mockValue = jest.fn().mockResolvedValue({
+    apiKey: "test-key",
+    apiGatewayId: "test-gateway"
+});
+
+class MockCrossAccountAPICache {
+    getValue = mockValue;
+}
+
 jest.mock("common/cross_account/cached_api_information", () => ({
-    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-        value: jest.fn(() => ({
-            apiKey: "test-key",
-            apiGatewayId: "test-gateway"
-        }))
-    }))
+    CrossAccountAPICache: jest.fn().mockImplementation(() => new MockCrossAccountAPICache())
 }));
 
 describe("Scenario: CdbContextService.getSessionData() handles responses", () => {
