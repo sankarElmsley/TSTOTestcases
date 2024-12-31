@@ -63,86 +63,52 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-/**
- * @jest-environment node
- */
+import { DynamoDBAPIClient } from './DynamoDBAPIClient';
 
-// Mock the CrossAccountAPICache
-jest.mock("../../../../common/cross_account/cached_api_information");
-import { CrossAccountAPICache } from "../../../../common/cross_account/cached_api_information";
-const MockedCrossAccountAPICache = CrossAccountAPICache as jest.MockedClass<typeof CrossAccountAPICache>;
-
-// Mock logger functions
-jest.mock("../../../../common/utils/logger", () => ({
-    debug: jest.fn(),
-    error: jest.fn(),
-    info: jest.fn(),
-    trace: jest.fn(),
-    debugWithSanitize: jest.fn(),
-    infoWithSanitize: jest.fn()
+// Mock AWS SDK modules
+jest.mock('@aws-sdk/client-dynamodb', () => ({
+    DynamoDBClient: jest.fn().mockImplementation(() => ({}))
 }));
 
-import { TransientCreditcardDataService } from "../../src/service/transientCreditCardDataService";
+jest.mock('@aws-sdk/lib-dynamodb', () => ({
+    DynamoDBDocumentClient: {
+        from: jest.fn().mockImplementation(() => ({}))
+    }
+}));
 
-describe('TransientCreditcardDataService', () => {
-    const mockSessionId = 'test-session-123';
-    const mockEcifId = 'test-ecif-456';
-    const mockOcifId = 'test-ocif-789';
-    const mockAccountIndex = 0;
-    const mockCorrelationId = 'test-correlation-101112';
-    let service: TransientCreditcardDataService;
+// Mock logger
+jest.mock("../../../../common/utils/logger", () => ({
+    info: jest.fn(),
+    trace: jest.fn()
+}));
+
+describe('DynamoDBAPIClient Tests', () => {
+    const mockCorrelationId = 'test-123';
 
     beforeEach(() => {
-        // Reset mocks
-        jest.resetAllMocks();
-
-        // Set up environment variables
-        process.env = {
-            crossRegion: 'us-east-1',
-            REGION: 'us-east-1',
-            crossAccountRoleForCdbContext: 'test-role',
-            ssmParamCdbContextApiKey: 'test-api-key',
-            ssmParamCdbContextGatewayId: 'test-gateway-id'
-        };
-
-        // Set up CrossAccountAPICache mock
-        MockedCrossAccountAPICache.mockImplementation(() => ({
-            value: jest.fn().mockResolvedValue({
-                apiKey: 'mock-api-key',
-                apiGatewayId: 'mock-gateway-id'
-            })
-        }));
-
-        // Create service instance
-        service = new TransientCreditcardDataService(
-            mockEcifId,
-            mockOcifId,
-            mockSessionId,
-            mockAccountIndex,
-            mockCorrelationId
-        );
+        jest.clearAllMocks();
+        process.env.REGION = 'us-east-1';
     });
 
     afterEach(() => {
         process.env = {};
     });
 
-    describe('Service Tests', () => {
-        it('should create service instance', () => {
-            expect(service).toBeDefined();
-        });
+    test('should create a new instance', () => {
+        const client = DynamoDBAPIClient.getInstance(mockCorrelationId);
+        expect(client).toBeDefined();
+        expect(client).toBeInstanceOf(DynamoDBAPIClient);
+    });
 
-        it('should get credit card data', async () => {
-            const result = await service.getCreditcardData();
-            expect(result).toBeDefined();
-            expect(result.correlationId).toBe(mockCorrelationId);
-        });
+    test('should return same instance when called multiple times', () => {
+        const instance1 = DynamoDBAPIClient.getInstance(mockCorrelationId);
+        const instance2 = DynamoDBAPIClient.getInstance(mockCorrelationId);
+        expect(instance1).toBe(instance2);
+    });
 
-        it('should handle errors gracefully', async () => {
-            // Force an error condition
-            process.env = {};
-            const result = await service.getCreditcardData();
-            expect(result.status).toBe('Failure');
-        });
+    test('should initialize DynamoDB clients', () => {
+        const client = DynamoDBAPIClient.getInstance(mockCorrelationId);
+        expect(client.dbClient).toBeDefined();
+        expect(client.dbDocumentClient).toBeDefined();
     });
 });
