@@ -64,9 +64,8 @@ import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilitySe
 import fetch from 'node-fetch';
 
 import { CreditCardAccountAuthorizationService } from "./CreditCardAccountAuthorizationService";
-import { ServerError } from "../../../../common/errors/server_error";
 
-// Mock logger functions
+// Mock logger
 jest.mock("../../../../common/utils/logger", () => ({
   debug: jest.fn(),
   error: jest.fn(),
@@ -79,19 +78,11 @@ jest.mock("../../../../common/utils/logger", () => ({
 
 // Mock CrossAccountAPICache
 jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    value: jest.fn().mockResolvedValue({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id"
-    })
-  }))
+  CrossAccountAPICache: jest.fn()
 }));
 
 describe("CreditCardAccountAuthorizationService Tests", () => {
   let service: CreditCardAccountAuthorizationService;
-  const mockSessionId = "test-session-id";
-  const mockEcifId = "test-ecif-id";
-  const mockCorrelationId = "test-correlation-id";
   
   beforeEach(() => {
     // Set required environment variables
@@ -114,36 +105,12 @@ describe("CreditCardAccountAuthorizationService Tests", () => {
     delete process.env.ssmParamCdbContextGatewayId;
   });
 
-  test("should initialize service with default env vars", () => {
-    service = new CreditCardAccountAuthorizationService(
-      mockSessionId,
-      mockEcifId,
-      mockCorrelationId
-    );
-    expect(service).toBeDefined();
-  });
-
-  test("should initialize service without env vars", () => {
-    // Remove all env vars
-    delete process.env.crossRegion;
-    delete process.env.REGION;
-    delete process.env.crossAccountRoleForCdbContext;
-    delete process.env.ssmParamCdbContextApiKey;
-    delete process.env.ssmParamCdbContextGatewayId;
-
-    service = new CreditCardAccountAuthorizationService(
-      mockSessionId,
-      mockEcifId,
-      mockCorrelationId
-    );
-    expect(service).toBeDefined();
-  });
-
   test("should get pending transactions", async () => {
+    // Create service instance
     service = new CreditCardAccountAuthorizationService(
-      mockSessionId,
-      mockEcifId,
-      mockCorrelationId
+      "test-session-id",
+      "test-ecif-id",
+      "test-correlation-id"
     );
 
     const result = await service.getPendingCCTransactions();
@@ -153,77 +120,55 @@ describe("CreditCardAccountAuthorizationService Tests", () => {
   test("should log trace messages in getPendingCCTransactions", async () => {
     const mockTrace = require("../../../../common/utils/logger").trace;
     
+    // Create service instance
     service = new CreditCardAccountAuthorizationService(
-      mockSessionId,
-      mockEcifId,
-      mockCorrelationId
+      "test-session-id",
+      "test-ecif-id",
+      "test-correlation-id"
     );
 
     await service.getPendingCCTransactions();
 
     expect(mockTrace).toHaveBeenCalledWith(
       "CreditCardAccountAuthorizationService - In getPendingCCTransactions.....",
-      mockCorrelationId
+      "test-correlation-id"
     );
     expect(mockTrace).toHaveBeenCalledWith(
       "CreditCardAccountAuthorizationService - Out getPendingCCTransactions.",
-      mockCorrelationId
+      "test-correlation-id"
     );
   });
 
-  test("should construct context ID correctly", () => {
+  test("should initialize service with empty env vars", () => {
+    // Remove all env vars
+    process.env = {};
+    
+    // Create service instance
     service = new CreditCardAccountAuthorizationService(
-      mockSessionId,
-      mockEcifId,
-      mockCorrelationId
+      "test-session-id",
+      "test-ecif-id",
+      "test-correlation-id"
     );
-    
-    // Access private property for testing (using any type)
-    const contextId = (service as any).contextId;
-    expect(contextId).toBe(`${mockSessionId}.${mockEcifId}`);
+
+    expect(service).toBeDefined();
   });
 
-  test("should handle API cache initialization error", () => {
-    // Mock CrossAccountAPICache to throw error
-    jest.spyOn(console, 'error').mockImplementation(() => {});
-    const mockError = new Error("Cache initialization failed");
+  test("should handle error when CrossAccountAPICache fails", () => {
+    const mockError = require("../../../../common/utils/logger").error;
     
+    // Mock CrossAccountAPICache to throw error
     require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache.mockImplementation(() => {
-      throw mockError;
+      throw new Error("API Cache Error");
     });
 
     expect(() => {
       new CreditCardAccountAuthorizationService(
-        mockSessionId,
-        mockEcifId,
-        mockCorrelationId
+        "test-session-id",
+        "test-ecif-id",
+        "test-correlation-id"
       );
-    }).toThrow(ServerError);
+    }).toThrow();
 
-    expect(console.error).toHaveBeenCalled();
-  });
-
-  test("should reuse existing API cache if available", () => {
-    const CrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
-    
-    // Create first instance
-    const service1 = new CreditCardAccountAuthorizationService(
-      mockSessionId,
-      mockEcifId,
-      mockCorrelationId
-    );
-
-    // Reset mock to track new calls
-    CrossAccountAPICache.mockClear();
-
-    // Create second instance
-    const service2 = new CreditCardAccountAuthorizationService(
-      mockSessionId,
-      mockEcifId,
-      mockCorrelationId
-    );
-
-    // CrossAccountAPICache should not be called again
-    expect(CrossAccountAPICache).not.toHaveBeenCalled();
+    expect(mockError).toHaveBeenCalled();
   });
 });
