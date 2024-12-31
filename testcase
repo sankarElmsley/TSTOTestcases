@@ -67,8 +67,27 @@ import fetch from 'node-fetch';
  * @jest-environment node
  */
 
-// Mock node-fetch first (important: this needs to be before other imports)
-jest.mock('node-fetch', () => jest.fn());
+// Mock node:http
+jest.mock('node:http', () => {
+    return {
+        default: {
+            request: jest.fn()
+        }
+    }
+}, { virtual: true });
+
+// Mock node-fetch
+jest.mock('node-fetch', () => jest.fn(), { virtual: true });
+
+// Mock http
+jest.mock('http', () => ({
+    request: jest.fn()
+}));
+
+// Mock https
+jest.mock('https', () => ({
+    request: jest.fn()
+}));
 
 // Mock AWS SDK
 const mockSTS = {
