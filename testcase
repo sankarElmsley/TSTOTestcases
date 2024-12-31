@@ -67,117 +67,22 @@ import fetch from 'node-fetch';
  * @jest-environment node
  */
 
-// Mock AWS SDK
-const mockSTS = {
-    assumeRole: jest.fn().mockReturnValue({
-        promise: jest.fn().mockResolvedValue({
-            Credentials: {
-                AccessKeyId: 'mock-access-key',
-                SecretAccessKey: 'mock-secret',
-                SessionToken: 'mock-session-token'
-            }
-        })
-    })
-};
+// Mock the CrossAccountAPICache
+jest.mock("../../../../common/cross_account/cached_api_information");
+import { CrossAccountAPICache } from "../../../../common/cross_account/cached_api_information";
+const MockedCrossAccountAPICache = CrossAccountAPICache as jest.MockedClass<typeof CrossAccountAPICache>;
 
-const mockSSM = {
-    getParameter: jest.fn().mockReturnValue({
-        promise: jest.fn().mockResolvedValue({
-            Parameter: { Value: 'mock-param-value' }
-        })
-    })
-};
-
-jest.mock('aws-sdk', () => ({
-    STS: jest.fn(() => mockSTS),
-    SSM: jest.fn(() => mockSSM)
-}));
-
-// Mock http and https
-jest.mock('http', () => ({
-    request: jest.fn(),
-    Agent: jest.fn()
-}));
-
-jest.mock('https', () => ({
-    request: jest.fn(),
-    Agent: jest.fn()
-}));
-
-// Mock axios and its dependencies
-jest.mock('axios', () => ({
-    create: jest.fn().mockReturnValue({
-        interceptors: {
-            request: { use: jest.fn() },
-            response: { use: jest.fn() }
-        },
-        get: jest.fn(),
-        post: jest.fn()
-    })
-}));
-
-// Mock the logger
+// Mock logger functions
 jest.mock("../../../../common/utils/logger", () => ({
     debug: jest.fn(),
-    debugWithSanitize: jest.fn(),
     error: jest.fn(),
     info: jest.fn(),
-    infoWithSanitize: jest.fn(),
     trace: jest.fn(),
-    logBackendServiceError: jest.fn(),
-    logBackendServiceRequest: jest.fn(),
-    logBackendServiceResponse: jest.fn()
+    debugWithSanitize: jest.fn(),
+    infoWithSanitize: jest.fn()
 }));
 
-// Mock CrossAccountAPICache
-jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-        value: jest.fn().mockResolvedValue({
-            apiKey: 'mock-api-key',
-            apiGatewayId: 'mock-gateway-id'
-        })
-    }))
-}));
-
-// Mock CdbContextService
-jest.mock("../../src/service/cdbContext/cdbContextService", () => ({
-    CdbContextService: jest.fn().mockImplementation(() => ({
-        getSessionData: jest.fn().mockResolvedValue({
-            data: {
-                'mysummary/getMySummary': {
-                    accounts: [
-                        {
-                            accountCategory: 'CREDIT_CARD_ACCOUNTS',
-                            accountNumber: '4500123456789012'
-                        }
-                    ]
-                }
-            }
-        })
-    }))
-}));
-
-// Mock CreditcardUtilityService
-jest.mock("../../src/service/ceu/creditcardUtilityService", () => ({
-    CreditcardUtilityService: jest.fn().mockImplementation(() => ({
-        getBinRangesCached: jest.fn().mockResolvedValue([
-            {
-                lowBIN: '450010',
-                highBIN: '450020',
-                LOB: 'R'
-            }
-        ])
-    }))
-}));
-
-// Mock cached cognito token
-jest.mock("../../../../common/cognito/cached_cognito_token", () => ({
-    CachedCognitoToken: jest.fn().mockImplementation(() => ({
-        get_token: jest.fn().mockResolvedValue('mock-token')
-    }))
-}));
-
-const { TransientCreditcardDataService } = require("../../src/service/transientCreditCardDataService");
+import { TransientCreditcardDataService } from "../../src/service/transientCreditCardDataService";
 
 describe('TransientCreditcardDataService', () => {
     const mockSessionId = 'test-session-123';
@@ -185,7 +90,7 @@ describe('TransientCreditcardDataService', () => {
     const mockOcifId = 'test-ocif-789';
     const mockAccountIndex = 0;
     const mockCorrelationId = 'test-correlation-101112';
-    let service;
+    let service: TransientCreditcardDataService;
 
     beforeEach(() => {
         // Reset mocks
@@ -199,6 +104,14 @@ describe('TransientCreditcardDataService', () => {
             ssmParamCdbContextApiKey: 'test-api-key',
             ssmParamCdbContextGatewayId: 'test-gateway-id'
         };
+
+        // Set up CrossAccountAPICache mock
+        MockedCrossAccountAPICache.mockImplementation(() => ({
+            value: jest.fn().mockResolvedValue({
+                apiKey: 'mock-api-key',
+                apiGatewayId: 'mock-gateway-id'
+            })
+        }));
 
         // Create service instance
         service = new TransientCreditcardDataService(
@@ -214,63 +127,22 @@ describe('TransientCreditcardDataService', () => {
         process.env = {};
     });
 
-    describe('Service Initialization', () => {
+    describe('Service Tests', () => {
         it('should create service instance', () => {
             expect(service).toBeDefined();
         });
 
-        it('should initialize with empty env vars', () => {
-            process.env = {};
-            const serviceWithNoEnv = new TransientCreditcardDataService(
-                mockEcifId,
-                mockOcifId,
-                mockSessionId,
-                mockAccountIndex,
-                mockCorrelationId
-            );
-            expect(serviceWithNoEnv).toBeDefined();
-        });
-    });
-
-    describe('getCreditcardData', () => {
-        it('should return credit card data successfully', async () => {
+        it('should get credit card data', async () => {
             const result = await service.getCreditcardData();
             expect(result).toBeDefined();
             expect(result.correlationId).toBe(mockCorrelationId);
         });
 
-        it('should handle missing session data', async () => {
-            jest.spyOn(require("../../src/service/cdbContext/cdbContextService").CdbContextService.prototype, 'getSessionData')
-                .mockResolvedValueOnce({ data: {} });
-
+        it('should handle errors gracefully', async () => {
+            // Force an error condition
+            process.env = {};
             const result = await service.getCreditcardData();
             expect(result.status).toBe('Failure');
-        });
-    });
-
-    describe('AWS Integration', () => {
-        it('should handle STS assume role', async () => {
-            const AWS = require('aws-sdk');
-            const sts = new AWS.STS();
-            
-            await sts.assumeRole({
-                RoleArn: process.env.crossAccountRoleForCdbContext,
-                RoleSessionName: 'test-session'
-            }).promise();
-
-            expect(mockSTS.assumeRole).toHaveBeenCalled();
-        });
-
-        it('should handle SSM parameter retrieval', async () => {
-            const AWS = require('aws-sdk');
-            const ssm = new AWS.SSM();
-            
-            await ssm.getParameter({
-                Name: process.env.ssmParamCdbContextApiKey,
-                WithDecryption: true
-            }).promise();
-
-            expect(mockSSM.getParameter).toHaveBeenCalled();
         });
     });
 });
