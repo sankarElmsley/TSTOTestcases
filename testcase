@@ -67,46 +67,6 @@ import fetch from 'node-fetch';
  * @jest-environment node
  */
 
-// Mock agent-base
-jest.mock('agent-base', () => {
-    class Agent {
-        constructor() {}
-    }
-    return { Agent };
-});
-
-// Mock https-proxy-agent
-jest.mock('https-proxy-agent', () => {
-    return {
-        HttpsProxyAgent: jest.fn().mockImplementation(() => ({
-            proxy: { host: 'mock-host', port: 1234 }
-        }))
-    };
-});
-
-// Mock node:http
-jest.mock('node:http', () => {
-    return {
-        default: {
-            request: jest.fn()
-        }
-    }
-}, { virtual: true });
-
-// Mock http and https
-jest.mock('http', () => ({
-    request: jest.fn(),
-    Agent: jest.fn()
-}));
-
-jest.mock('https', () => ({
-    request: jest.fn(),
-    Agent: jest.fn()
-}));
-
-// Mock node-fetch
-jest.mock('node-fetch', () => jest.fn(), { virtual: true });
-
 // Mock AWS SDK
 const mockSTS = {
     assumeRole: jest.fn().mockReturnValue({
@@ -123,9 +83,7 @@ const mockSTS = {
 const mockSSM = {
     getParameter: jest.fn().mockReturnValue({
         promise: jest.fn().mockResolvedValue({
-            Parameter: {
-                Value: 'mock-parameter-value'
-            }
+            Parameter: { Value: 'mock-param-value' }
         })
     })
 };
@@ -135,31 +93,30 @@ jest.mock('aws-sdk', () => ({
     SSM: jest.fn(() => mockSSM)
 }));
 
-// Mock auto_local_cache
-jest.mock("../../../../common/cache/auto_local_cache", () => ({
-    __esModule: true,
-    AutoLocalCache: jest.fn().mockImplementation(() => ({
-        get_value: jest.fn().mockResolvedValue({
-            value: [{ binStart: "400000", binEnd: "499999" }]
-        })
-    })),
-    AutoCacheResult: jest.fn().mockImplementation((value, ttl) => ({
-        value,
-        ttl
-    }))
+// Mock http and https
+jest.mock('http', () => ({
+    request: jest.fn(),
+    Agent: jest.fn()
 }));
 
-// Mock CrossAccountAPICache
-jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-        value: jest.fn().mockResolvedValue({
-            apiKey: 'mock-api-key',
-            apiGatewayId: 'mock-gateway-id'
-        })
-    }))
+jest.mock('https', () => ({
+    request: jest.fn(),
+    Agent: jest.fn()
 }));
 
-// Mock logger functions
+// Mock axios and its dependencies
+jest.mock('axios', () => ({
+    create: jest.fn().mockReturnValue({
+        interceptors: {
+            request: { use: jest.fn() },
+            response: { use: jest.fn() }
+        },
+        get: jest.fn(),
+        post: jest.fn()
+    })
+}));
+
+// Mock the logger
 jest.mock("../../../../common/utils/logger", () => ({
     debug: jest.fn(),
     debugWithSanitize: jest.fn(),
@@ -170,6 +127,16 @@ jest.mock("../../../../common/utils/logger", () => ({
     logBackendServiceError: jest.fn(),
     logBackendServiceRequest: jest.fn(),
     logBackendServiceResponse: jest.fn()
+}));
+
+// Mock CrossAccountAPICache
+jest.mock("../../../../common/cross_account/cached_api_information", () => ({
+    CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+        value: jest.fn().mockResolvedValue({
+            apiKey: 'mock-api-key',
+            apiGatewayId: 'mock-gateway-id'
+        })
+    }))
 }));
 
 // Mock CdbContextService
@@ -203,7 +170,13 @@ jest.mock("../../src/service/ceu/creditcardUtilityService", () => ({
     }))
 }));
 
-// Import the service under test
+// Mock cached cognito token
+jest.mock("../../../../common/cognito/cached_cognito_token", () => ({
+    CachedCognitoToken: jest.fn().mockImplementation(() => ({
+        get_token: jest.fn().mockResolvedValue('mock-token')
+    }))
+}));
+
 const { TransientCreditcardDataService } = require("../../src/service/transientCreditCardDataService");
 
 describe('TransientCreditcardDataService', () => {
@@ -238,7 +211,6 @@ describe('TransientCreditcardDataService', () => {
     });
 
     afterEach(() => {
-        jest.clearAllMocks();
         process.env = {};
     });
 
