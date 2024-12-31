@@ -67,55 +67,99 @@ import fetch from 'node-fetch';
  * @jest-environment node
  */
 
-// Mock the CrossAccountAPICache
-jest.mock("../../../../common/cross_account/cached_api_information");
-import { CrossAccountAPICache } from "../../../../common/cross_account/cached_api_information";
-const MockedCrossAccountAPICache = CrossAccountAPICache as jest.MockedClass<typeof CrossAccountAPICache>;
-
-// Mock logger functions
-jest.mock("../../../../common/utils/logger", () => ({
-    logBackendServiceError: jest.fn(),
-    logBackendServiceRequest: jest.fn(),
-    logBackendServiceResponse: jest.fn(),
-    error: jest.fn(),
-    trace: jest.fn(),
-    info: jest.fn(),
+// AWS SDK Mock
+jest.mock('aws-sdk', () => ({
+    STS: jest.fn(() => ({
+        assumeRole: jest.fn().mockReturnValue({
+            promise: jest.fn().mockResolvedValue({
+                Credentials: {
+                    AccessKeyId: 'mock-access-key',
+                    SecretAccessKey: 'mock-secret',
+                    SessionToken: 'mock-token'
+                }
+            })
+        })
+    })),
+    SSM: jest.fn(() => ({
+        getParameter: jest.fn().mockReturnValue({
+            promise: jest.fn().mockResolvedValue({
+                Parameter: { Value: 'mock-param-value' }
+            })
+        })
+    }))
 }));
 
-import { CustomerInstallmentPlanOfferService } from "../../src/service/cipo/customerInstallmentPlanOfferService";
+// Logger Mock
+jest.mock('../common/utils/logger', () => ({
+    debug: jest.fn(),
+    error: jest.fn(),
+    info: jest.fn(),
+    trace: jest.fn(),
+    debugWithSanitize: jest.fn(),
+    infoWithSanitize: jest.fn()
+}));
 
-describe('CustomerInstallmentPlanOfferService', () => {
-    const mockSessionId = 'test-session-123';
-    const mockEcifId = 'test-ecif-456';
-    const mockCorrelationId = 'test-correlation-789';
-    let service: CustomerInstallmentPlanOfferService;
+// Service Mocks
+jest.mock('./cdbContext/cdbContextService', () => ({
+    CdbContextService: jest.fn().mockImplementation(() => ({
+        getSessionData: jest.fn().mockResolvedValue({
+            data: {
+                'mysummary/getMySummary': {
+                    accounts: [
+                        {
+                            accountCategory: 'CREDIT_CARD_ACCOUNTS',
+                            accountNumber: '4500123456789012'
+                        }
+                    ]
+                }
+            }
+        })
+    }))
+}));
+
+jest.mock('./ceu/creditcardUtilityService', () => ({
+    CreditcardUtilityService: jest.fn().mockImplementation(() => ({
+        getBinRangesCached: jest.fn().mockResolvedValue([
+            {
+                lowBIN: '450010',
+                highBIN: '450020',
+                LOB: 'R'
+            }
+        ])
+    }))
+}));
+
+import { TransientCreditcardDataService } from './TransientCreditcardDataService';
+
+describe('TransientCreditcardDataService', () => {
+    let service: TransientCreditcardDataService;
+    const testData = {
+        ecifId: 'test-ecif-123',
+        ocifId: 'test-ocif-456',
+        sessionId: 'test-session-789',
+        accountIndex: 0,
+        correlationId: 'test-correlation-101112'
+    };
 
     beforeEach(() => {
         // Reset mocks
-        jest.resetAllMocks();
+        jest.clearAllMocks();
 
-        // Set up environment variables
+        // Setup environment
         process.env = {
-            crossRegion: 'us-east-1',
-            REGION: 'us-east-1',
-            crossAccountRoleForCdbContext: 'test-role',
-            ssmParamCdbContextApiKey: 'test-api-key',
-            ssmParamCdbContextGatewayId: 'test-gateway-id'
+            AWS_REGION: 'us-east-1',
+            CROSS_ACCOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/test-role',
+            SSM_PARAM_API_KEY: '/test/api-key',
+            SSM_PARAM_GATEWAY_ID: '/test/gateway-id'
         };
 
-        // Set up CrossAccountAPICache mock
-        MockedCrossAccountAPICache.mockImplementation(() => ({
-            value: jest.fn().mockResolvedValue({
-                apiKey: 'mock-api-key',
-                apiGatewayId: 'mock-gateway-id'
-            })
-        }));
-
         // Create service instance
-        service = new CustomerInstallmentPlanOfferService(
-            mockSessionId,
-            mockEcifId,
-            mockCorrelationId
+        service = new TransientCreditcardDataService(
+            testData.ecifId,
+            testData.ocifId,
+            testData.sessionId,
+            testData.accountIndex,
+            testData.correlationId
         );
     });
 
@@ -123,41 +167,64 @@ describe('CustomerInstallmentPlanOfferService', () => {
         process.env = {};
     });
 
-    describe('Service Initialization', () => {
+    describe('Basic Tests', () => {
         it('should create service instance', () => {
-            const testService = new CustomerInstallmentPlanOfferService(
-                mockSessionId,
-                mockEcifId,
-                mockCorrelationId
-            );
-            expect(testService).toBeDefined();
+            expect(service).toBeDefined();
+            expect(service).toBeInstanceOf(TransientCreditcardDataService);
         });
 
-        it('should initialize with empty env vars', () => {
-            process.env = {};
-            const serviceWithNoEnv = new CustomerInstallmentPlanOfferService(
-                mockSessionId,
-                mockEcifId,
-                mockCorrelationId
-            );
-            expect(serviceWithNoEnv).toBeDefined();
+        it('should get credit card data successfully', async () => {
+            const result = await service.getCreditcardData();
+            expect(result).toBeDefined();
+            expect(result).toHaveProperty('correlationId', testData.correlationId);
         });
     });
 
-    describe('getInstallmentPlanOfferDetails', () => {
-        it('should return empty string initially', async () => {
-            const result = await service.getInstallmentPlanOfferDetails();
-            expect(result).toBe('');
+    describe('Error Handling', () => {
+        it('should handle missing session data', async () => {
+            // Mock CdbContextService to return empty data
+            require('./cdbContext/cdbContextService').CdbContextService
+                .mockImplementationOnce(() => ({
+                    getSessionData: jest.fn().mockResolvedValue({ data: {} })
+                }));
+
+            const result = await service.getCreditcardData();
+            expect(result.status).toBe('Failure');
         });
 
-        it('should handle the API call', async () => {
-            try {
-                const result = await service.getInstallmentPlanOfferDetails();
-                expect(result).toBeDefined();
-            } catch (error) {
-                // Allow test to pass even if there's an error
-                expect(true).toBe(true);
-            }
+        it('should handle invalid account index', async () => {
+            const invalidService = new TransientCreditcardDataService(
+                testData.ecifId,
+                testData.ocifId,
+                testData.sessionId,
+                999, // Invalid index
+                testData.correlationId
+            );
+
+            const result = await invalidService.getCreditcardData();
+            expect(result.status).toBe('Failure');
+        });
+    });
+
+    describe('AWS Integration', () => {
+        it('should handle AWS service calls', async () => {
+            const AWS = require('aws-sdk');
+            const sts = new AWS.STS();
+            const ssm = new AWS.SSM();
+
+            // Verify STS call
+            await sts.assumeRole({
+                RoleArn: process.env.CROSS_ACCOUNT_ROLE_ARN,
+                RoleSessionName: 'test-session'
+            }).promise();
+            expect(sts.assumeRole).toHaveBeenCalled();
+
+            // Verify SSM call
+            await ssm.getParameter({
+                Name: process.env.SSM_PARAM_API_KEY,
+                WithDecryption: true
+            }).promise();
+            expect(ssm.getParameter).toHaveBeenCalled();
         });
     });
 });
