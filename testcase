@@ -63,52 +63,84 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { DynamoDBAPIClient } from './DynamoDBAPIClient';
+import { CreditCardAccountAuthorizationService } from "./CreditCardAccountAuthorizationService";
 
-// Mock AWS SDK modules
-jest.mock('@aws-sdk/client-dynamodb', () => ({
-    DynamoDBClient: jest.fn().mockImplementation(() => ({}))
-}));
-
-jest.mock('@aws-sdk/lib-dynamodb', () => ({
-    DynamoDBDocumentClient: {
-        from: jest.fn().mockImplementation(() => ({}))
-    }
-}));
-
-// Mock logger
+// Mock logger functions
 jest.mock("../../../../common/utils/logger", () => ({
-    info: jest.fn(),
-    trace: jest.fn()
+  debug: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  trace: jest.fn(),
+  logBackendServiceError: jest.fn(),
+  logBackendServiceRequest: jest.fn(),
+  logBackendServiceResponse: jest.fn(),
 }));
 
-describe('DynamoDBAPIClient Tests', () => {
-    const mockCorrelationId = 'test-123';
+// Mock CrossAccountAPICache
+jest.mock("../../../../common/cross_account/cached_api_information", () => ({
+  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+    value: jest.fn().mockResolvedValue({
+      apiKey: "mock-api-key",
+      apiGatewayId: "mock-gateway-id"
+    })
+  }))
+}));
 
-    beforeEach(() => {
-        jest.clearAllMocks();
-        process.env.REGION = 'us-east-1';
-    });
+describe("CreditCardAccountAuthorizationService Tests", () => {
+  let service: CreditCardAccountAuthorizationService;
+  
+  beforeEach(() => {
+    // Set required environment variables
+    process.env.crossRegion = "us-east-1";
+    process.env.REGION = "us-east-1";
+    process.env.crossAccountRoleForCdbContext = "test-role";
+    process.env.ssmParamCdbContextApiKey = "test-api-key";
+    process.env.ssmParamCdbContextGatewayId = "test-gateway-id";
+    
+    // Clear all mocks
+    jest.clearAllMocks();
+  });
 
-    afterEach(() => {
-        process.env = {};
-    });
+  afterEach(() => {
+    // Clean up environment variables
+    delete process.env.crossRegion;
+    delete process.env.REGION;
+    delete process.env.crossAccountRoleForCdbContext;
+    delete process.env.ssmParamCdbContextApiKey;
+    delete process.env.ssmParamCdbContextGatewayId;
+  });
 
-    test('should create a new instance', () => {
-        const client = DynamoDBAPIClient.getInstance(mockCorrelationId);
-        expect(client).toBeDefined();
-        expect(client).toBeInstanceOf(DynamoDBAPIClient);
-    });
+  test("should get pending transactions", async () => {
+    // Create service instance
+    service = new CreditCardAccountAuthorizationService(
+      "test-session-id",
+      "test-ecif-id",
+      "test-correlation-id"
+    );
 
-    test('should return same instance when called multiple times', () => {
-        const instance1 = DynamoDBAPIClient.getInstance(mockCorrelationId);
-        const instance2 = DynamoDBAPIClient.getInstance(mockCorrelationId);
-        expect(instance1).toBe(instance2);
-    });
+    const result = await service.getPendingCCTransactions();
+    expect(result).toBe("");
+  });
 
-    test('should initialize DynamoDB clients', () => {
-        const client = DynamoDBAPIClient.getInstance(mockCorrelationId);
-        expect(client.dbClient).toBeDefined();
-        expect(client.dbDocumentClient).toBeDefined();
-    });
+  test("should log trace messages in getPendingCCTransactions", async () => {
+    const mockTrace = require("../../../../common/utils/logger").trace;
+    
+    // Create service instance
+    service = new CreditCardAccountAuthorizationService(
+      "test-session-id",
+      "test-ecif-id",
+      "test-correlation-id"
+    );
+
+    await service.getPendingCCTransactions();
+
+    expect(mockTrace).toHaveBeenCalledWith(
+      "CreditCardAccountAuthorizationService - In getPendingCCTransactions.....",
+      "test-correlation-id"
+    );
+    expect(mockTrace).toHaveBeenCalledWith(
+      "CreditCardAccountAuthorizationService - Out getPendingCCTransactions.",
+      "test-correlation-id"
+    );
+  });
 });
