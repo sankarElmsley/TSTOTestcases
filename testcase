@@ -63,254 +63,91 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { CreditCardArrangementReportService } from "./CreditCardArrangementReportService";
-import { ApiConstants } from "../../util/constants";
-import { ServerError } from "../../util/serverError";
+import { CrossAccountAPICache } from "../../../../common/cross_account/cached_api_information";
+import {
+  logBackendServiceError,
+  logBackendServiceRequest,
+  logBackendServiceResponse,
+  error,
+  trace,
+  info,
+} from "../../../../common/utils/logger";
 import { ErrorCodes } from "../../util/errorCodes";
+import { ServerError } from "../../util/serverError";
 
-// Mock request mapper
-jest.mock('./creditcardArrangementReportRequestMapper', () => ({
-  ICreditcardArrangementReportRequestMapper: jest.fn().mockImplementation(() => ({
-    getCreditcardAvailableBalanceRequest: jest.fn().mockReturnValue({ balanceRequest: true }),
-    getCreditcardDetailsRequest: jest.fn().mockReturnValue({ fullDetailsRequest: true })
-  }))
-}));
+/**
+ * Backend API service to manage the endpoints from the CCR API.
+ * @author Parthiban
+ * @since 25/Dec/2024
+ */
+export class CreditCardRewardService {
+  static readonly LOG_PREFIX = "CreditCardRewardService - ";
+  private readonly sessionId: string;
+  private readonly ecifId: string;
+  private readonly correlationId: string;
+  private static apiInfoCache: CrossAccountAPICache | null = null;
+  private readonly contextId: string;
 
-// Mock CrossAccountAPICache
-jest.mock("../../../../common/cross_account/cached_api_information", () => ({
-  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
-    value: jest.fn().mockResolvedValue({
-      apiKey: "mock-api-key",
-      apiGatewayId: "mock-gateway-id"
-    })
-  }))
-}));
+  constructor(sessionId: string, ecifId: string, correlationId: string) {
+    this.sessionId = sessionId;
+    this.ecifId = ecifId;
+    this.correlationId = correlationId;
+    this.contextId = `${sessionId}.${ecifId}`;
+    this.loadApiInfo();
+  }
 
-// Mock logger functions
-jest.mock("../../../../common/utils/logger", () => ({
-  debug: jest.fn(),
-  error: jest.fn(),
-  info: jest.fn(),
-  trace: jest.fn(),
-  logBackendServiceError: jest.fn(),
-  logBackendServiceRequest: jest.fn(),
-  logBackendServiceResponse: jest.fn()
-}));
+  /**
+   * Retrieves the required SSM parameters from the cross account.
+   */
+  private loadApiInfo(): void {
+    if (CreditCardRewardService.apiInfoCache == null) {
+      try {
+        // Get All Configurations for this call
+        const crossRegion = process.env.crossRegion ?? "";
+        const crossAccountRoleRegion = process.env.REGION ?? ""; // We always use our own REGION
+        const crossAccountRole = process.env.crossAccountRoleForCdbContext ?? "";
+        const singleAccountAPIKeyName = process.env.ssmParamCdbContextApiKey ?? "";
+        const singleAccountAPIGatewayIDName =
+          process.env.ssmParamCdbContextGatewayId ?? "";
 
-describe("CreditCardArrangementReportService", () => {
-  let service: CreditCardArrangementReportService;
-  const mockCardNumber = "4500000000000001";
-  const mockClientId = "testClient123";
-  const mockCorrelationId = "test-correlation-id";
-
-  const mockSuccessResponse = {
-    data: {
-      accountNumber: mockCardNumber,
-      availableBalance: 5000,
-      totalBalance: 1000,
-      creditLimit: 6000
+        CreditCardRewardService.apiInfoCache = new CrossAccountAPICache(
+          crossRegion,
+          crossAccountRoleRegion,
+          crossAccountRole,
+          singleAccountAPIKeyName,
+          singleAccountAPIGatewayIDName
+        );
+      } catch (e) {
+        error(
+          CreditCardRewardService.LOG_PREFIX.concat(
+            "Unexpected error while retrieving the SSM params for making backend API (CCR) call"
+          ),
+          e,
+          this.correlationId
+        );
+        throw new ServerError(
+          ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR_SSM_PARAM.errorMessage,
+          ErrorCodes.SESSION_DATA_API_UNEXPECTED_ERROR_SSM_PARAM
+        );
+      }
     }
-  };
+  }
 
-  beforeEach(() => {
-    // Reset all mocks
-    jest.clearAllMocks();
-    
-    // Set up environment variables
-    process.env = {
-      crossRegion: "us-east-1",
-      REGION: "us-east-1",
-      crossAccountRoleForCCAR: "test-role",
-      ssmParamCcarApiKey: "test-api-key",
-      ssmParamCcarGatewayId: "test-gateway-id",
-      getCardDetailsUrl: "https://test-api.bmo.com/v1/card-details"
-    };
-
-    // Create new instance
-    service = new CreditCardArrangementReportService(
-      mockCardNumber,
-      mockClientId,
-      mockCorrelationId
+  /**
+   * Retrieves the customer credit card reward details.
+   * @returns rewardData
+   */
+  async getRewardDetails(): Promise<string> {
+    trace(
+      CreditCardRewardService.LOG_PREFIX.concat("In getRewardDetails....."),
+      this.correlationId
     );
 
-    // Mock global fetch
-    global.fetch = jest.fn();
-  });
+    trace(
+      CreditCardRewardService.LOG_PREFIX.concat("Out getRewardDetails."),
+      this.correlationId
+    );
 
-  afterEach(() => {
-    jest.clearAllMocks();
-    process.env = {};
-  });
-
-  describe("getCreditCardDetail", () => {
-    test("should fetch full credit card details successfully", async () => {
-      const mockLogger = require("../../../../common/utils/logger");
-      
-      global.fetch = jest.fn().mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve(mockSuccessResponse)
-      });
-
-      const result = await service.getCreditCardDetail(false);
-
-      expect(result).toEqual(mockSuccessResponse);
-      expect(mockLogger.debug).toHaveBeenCalledWith(
-        expect.stringContaining("In getCreditCardDetail"),
-        mockCorrelationId
-      );
-      expect(mockLogger.logBackendServiceRequest).toHaveBeenCalledWith(
-        "CCAR",
-        expect.any(String),
-        mockCorrelationId
-      );
-      expect(global.fetch).toHaveBeenCalledWith(
-        "https://test-api.bmo.com/v1/card-details",
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({
-            "Content-Type": "application/json",
-            "x-api-key": "mock-api-key",
-            "x-apigw-api-id": "mock-gateway-id",
-            "x-request-id": mockCorrelationId,
-            "x-fapi-interaction-id": mockCorrelationId,
-            "x-app-cat-id": ApiConstants.APP_CAT_ID,
-            "x-client-id": ApiConstants.APP_CAT_ID,
-            "x-fapi-financial-id": ApiConstants.API_FINANCIAL_ID
-          })
-        })
-      );
-    });
-
-    test("should fetch only available balance when specified", async () => {
-      global.fetch = jest.fn().mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve(mockSuccessResponse)
-      });
-
-      await service.getCreditCardDetail(true);
-
-      const requestMapper = require("./creditcardArrangementReportRequestMapper")
-        .ICreditcardArrangementReportRequestMapper;
-      
-      expect(requestMapper.mock.instances[0].getCreditcardAvailableBalanceRequest)
-        .toHaveBeenCalled();
-      expect(requestMapper.mock.instances[0].getCreditcardDetailsRequest)
-        .not.toHaveBeenCalled();
-    });
-
-    test("should throw ServerError when API returns non-200 status", async () => {
-      global.fetch = jest.fn().mockResolvedValueOnce({
-        status: 500,
-        statusText: "Internal Server Error"
-      });
-
-      await expect(service.getCreditCardDetail(false))
-        .rejects
-        .toThrow(ServerError);
-
-      const mockLogger = require("../../../../common/utils/logger");
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining("500"),
-        mockCorrelationId
-      );
-    });
-
-    test("should throw ServerError when API call fails", async () => {
-      global.fetch = jest.fn().mockRejectedValueOnce(new Error("Network error"));
-
-      await expect(service.getCreditCardDetail(false))
-        .rejects
-        .toThrow(ServerError);
-
-      const mockLogger = require("../../../../common/utils/logger");
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining("Unexpected error while calling to CCAR API"),
-        expect.any(Error),
-        mockCorrelationId
-      );
-      expect(mockLogger.logBackendServiceError).toHaveBeenCalled();
-    });
-
-    test("should handle API cache initialization error", () => {
-      const CrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
-      const mockError = new Error("Cache initialization error");
-      
-      CrossAccountAPICache.mockImplementationOnce(() => {
-        throw mockError;
-      });
-
-      expect(() => {
-        new CreditCardArrangementReportService(
-          mockCardNumber,
-          mockClientId,
-          mockCorrelationId
-        );
-      }).toThrow(ServerError);
-
-      const mockLogger = require("../../../../common/utils/logger");
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining("Unexpected error while retrieving the SSM params"),
-        mockError,
-        mockCorrelationId
-      );
-    });
-
-    test("should reuse existing API cache", () => {
-      const CrossAccountAPICache = require("../../../../common/cross_account/cached_api_information").CrossAccountAPICache;
-      CrossAccountAPICache.mockClear();
-
-      // Create first instance
-      const service1 = new CreditCardArrangementReportService(
-        mockCardNumber,
-        mockClientId,
-        mockCorrelationId
-      );
-
-      // Create second instance
-      const service2 = new CreditCardArrangementReportService(
-        mockCardNumber,
-        mockClientId,
-        mockCorrelationId
-      );
-
-      // Should only be called once for the first instance
-      expect(CrossAccountAPICache).toHaveBeenCalledTimes(0);
-    });
-  });
-});
-
-"test": "jest --transformIgnorePatterns \"node_modules/(?!(@aws-sdk)/)/\""
-
-
-
-{
-  "name": "cdb-transient-creditcard-data-api_63623",
-  "version": "1.0.0",
-  "type": "module",
-  "main": "src/index.ts",
-  "scripts": {
-    "test": "jest",
-    "build": "esbuild src/*.ts --bundle --minify --sourcemap --platform=node --target=es2020 --outdir=build"
-  },
-  "dependencies": {
-    "@aws-sdk/client-sts": "3.716.0",
-    "@aws-sdk/client-dynamodb": "3.0.0",
-    "@aws-sdk/client-secrets-manager": "3.716.0",
-    "@aws-sdk/client-ssm": "3.716.0",
-    "@aws-sdk/lib-dynamodb": "3.0.0",
-    "@aws-sdk/util-dynamodb": "3.0.0",
-    "@types/aws-lambda": "8.0.0",
-    "@types/node": "10.0.0",
-    "aws-lambda": "1.0.0",
-    "node-fetch": "3.0.0"
-  },
-  "devDependencies": {
-    "@babel/core": "7.24.5",
-    "@babel/preset-env": "7.24.5",
-    "@babel/preset-typescript": "7.24.1",
-    "@types/jest": "29.5.14",
-    "jest": "29.7.0",
-    "ts-jest": "29.2.5",
-    "typescript": "5.7.2"
+    return "";
   }
 }
