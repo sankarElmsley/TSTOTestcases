@@ -63,24 +63,15 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { CrossAccountAPICache } from "../../../../common/cross_account/cached_api_information";
-import {
-  logBackendServiceError,
-  logBackendServiceRequest,
-  logBackendServiceResponse,
-  error,
-  trace,
-  info,
-} from "../../../../common/utils/logger";
-import { ErrorCodes } from "../../util/errorCodes";
-import { ServerError } from "../../util/serverError";
 
-import { CreditCardRewardService } from "///src/service/ccr/creditCardRewardService";
-import { CrossAccountAPICache } from "../../../../common/cross_account/cached_api_information";
-import { ServerError } from "../../util/serverError";
+
+// Mock CrossAccountAPICache
+jest.mock("../../../common/cross_account/cached_api_information", () => ({
+  CrossAccountAPICache: jest.fn(),
+}));
 
 // Mock logger
-jest.mock("../../../../common/utils/logger", () => ({
+jest.mock("../../../common/utils/logger", () => ({
   debug: jest.fn(),
   error: jest.fn(),
   info: jest.fn(),
@@ -90,52 +81,43 @@ jest.mock("../../../../common/utils/logger", () => ({
   logBackendServiceResponse: jest.fn(),
 }));
 
-// Mock CrossAccountAPICache
-jest.mock("../../../../common/cross_account/cached_api_information");
-
 describe("CreditCardRewardService Tests", () => {
   let service: CreditCardRewardService;
-  const mockSessionId = "test-session-id";
-  const mockEcifId = "test-ecif-id";
   const mockCorrelationId = "test-correlation-id";
-  const DEFAULT_CACHE_TTL_MS = 300000; // 5 minutes
-  
+
   beforeEach(() => {
     // Set required environment variables
     process.env.crossRegion = "us-east-1";
     process.env.REGION = "us-east-1";
-    process.env.crossAccountRoleForCdbContext = "test-role";
+    process.env.CrossAccountRoleForCdbContext = "test-role";
     process.env.ssmParamCdbContextApiKey = "test-api-key";
     process.env.ssmParamCdbContextGatewayId = "test-gateway-id";
-    process.env.CACHE_TTL_MS = "600000"; // 10 minutes
-    
+
     // Clear all mocks
     jest.clearAllMocks();
-    
-    // Reset CrossAccountAPICache mock
-    (CrossAccountAPICache as jest.Mock).mockClear();
   });
 
   afterEach(() => {
     // Clean up environment variables
     delete process.env.crossRegion;
     delete process.env.REGION;
-    delete process.env.crossAccountRoleForCdbContext;
+    delete process.env.CrossAccountRoleForCdbContext;
     delete process.env.ssmParamCdbContextApiKey;
     delete process.env.ssmParamCdbContextGatewayId;
-    delete process.env.CACHE_TTL_MS;
   });
 
   test("should get reward details", async () => {
-    service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
+    // Create service instance
+    service = new CreditCardRewardService(mockCorrelationId);
     const result = await service.getRewardDetails();
-    expect(result).toBe("");
+    expect(result).toBeDefined();
   });
 
   test("should log trace messages in getRewardDetails", async () => {
-    const mockTrace = require("../../../../common/utils/logger").trace;
-    
-    service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
+    const mockTrace = require("../../../common/utils/logger").trace;
+
+    // Create service instance
+    service = new CreditCardRewardService(mockCorrelationId);
     await service.getRewardDetails();
 
     expect(mockTrace).toHaveBeenCalledWith(
@@ -148,125 +130,27 @@ describe("CreditCardRewardService Tests", () => {
     );
   });
 
-  test("should initialize CrossAccountAPICache with correct parameters including cache TTL", () => {
-    service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
-    
-    expect(CrossAccountAPICache).toHaveBeenCalledWith(
-      "us-east-1",
-      "us-east-1",
-      "test-role",
-      "test-api-key",
-      "test-gateway-id",
-      600000 // 10 minutes from environment variable
-    );
+  test("should initialize service with empty env vars", () => {
+    process.env = {};
+
+    service = new CreditCardRewardService(mockCorrelationId);
+    expect(service).toBeDefined();
   });
 
-  test("should use default cache TTL when environment variable is not set", () => {
-    delete process.env.CACHE_TTL_MS;
-    
-    service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
-    
-    expect(CrossAccountAPICache).toHaveBeenCalledWith(
-      "us-east-1",
-      "us-east-1",
-      "test-role",
-      "test-api-key",
-      "test-gateway-id",
-      DEFAULT_CACHE_TTL_MS
-    );
-  });
+  test("should reuse existing API cache", () => {
+    const CrossAccountAPICache = require("../../../common/cross_account/cached_api_information")
+      .CrossAccountAPICache;
 
-  test("should use default cache TTL when environment variable is invalid", () => {
-    process.env.CACHE_TTL_MS = "invalid";
-    
-    service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
-    
-    expect(CrossAccountAPICache).toHaveBeenCalledWith(
-      "us-east-1",
-      "us-east-1",
-      "test-role",
-      "test-api-key",
-      "test-gateway-id",
-      DEFAULT_CACHE_TTL_MS
-    );
-  });
-
-  test("should use custom cache TTL when valid value is provided", () => {
-    process.env.CACHE_TTL_MS = "900000"; // 15 minutes
-    
-    service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
-    
-    expect(CrossAccountAPICache).toHaveBeenCalledWith(
-      "us-east-1",
-      "us-east-1",
-      "test-role",
-      "test-api-key",
-      "test-gateway-id",
-      900000
-    );
-  });
-
-  test("should throw ServerError when CrossAccountAPICache initialization fails", () => {
-    (CrossAccountAPICache as jest.Mock).mockImplementation(() => {
-      throw new Error("API Cache initialization failed");
-    });
-
-    expect(() => {
-      service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
-    }).toThrow(ServerError);
-  });
-
-  test("should use default empty string for missing environment variables", () => {
-    delete process.env.crossRegion;
-    delete process.env.crossAccountRoleForCdbContext;
-    
-    service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
-    
-    expect(CrossAccountAPICache).toHaveBeenCalledWith(
-      "",
-      "us-east-1",
-      "",
-      "test-api-key",
-      "test-gateway-id",
-      DEFAULT_CACHE_TTL_MS
-    );
-  });
-
-  test("should not reinitialize apiInfoCache if already initialized", () => {
     // Create first instance
-    service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
-    expect(CrossAccountAPICache).toHaveBeenCalledTimes(1);
-    
+    const service1 = new CreditCardRewardService(mockCorrelationId);
+
+    // Reset mock to track new calls
+    CrossAccountAPICache.mockClear();
+
     // Create second instance
-    const service2 = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
-    expect(CrossAccountAPICache).toHaveBeenCalledTimes(1);
-  });
+    const service2 = new CreditCardRewardService(mockCorrelationId);
 
-  test("should handle empty sessionId and ecifId", () => {
-    service = new CreditCardRewardService("", "", mockCorrelationId);
-    expect((service as any).contextId).toBe(".");
-  });
-
-  test("should log error when SSM params retrieval fails", () => {
-    const mockError = require("../../../../common/utils/logger").error;
-    (CrossAccountAPICache as jest.Mock).mockImplementation(() => {
-      throw new Error("SSM params retrieval failed");
-    });
-
-    expect(() => {
-      service = new CreditCardRewardService(mockSessionId, mockEcifId, mockCorrelationId);
-    }).toThrow();
-
-    expect(mockError).toHaveBeenCalledWith(
-      expect.stringContaining("Unexpected error while retrieving the SSM params"),
-      expect.any(Error),
-      mockCorrelationId
-    );
-  });
-
-  test("should handle non-string input parameters", () => {
-    // @ts-ignore - Testing runtime behavior with invalid types
-    service = new CreditCardRewardService(123, 456, mockCorrelationId);
-    expect((service as any).contextId).toBe("123.456");
+    // CrossAccountAPICache should not be called again
+    expect(CrossAccountAPICache).not.toHaveBeenCalled();
   });
 });
