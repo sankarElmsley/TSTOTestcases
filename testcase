@@ -64,139 +64,129 @@ import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilitySe
 import fetch from 'node-fetch';
 
 
+// First mock node-fetch
+jest.mock('node-fetch', () => jest.fn());
 
-// Mock the GetCognitoToken module
-jest.mock("../../../common/cognito/get_cognito_token", () => ({
-  GetCognitoToken: jest.fn().mockResolvedValue("mock-token"),
+import { CreditCardAccountAuthorizationService } from "../../../src/service/ccaa/creditCardAccountAuthorizationService";
+import { ServerError } from "../../../src/util/serverError";
+
+// Mock logger functions
+jest.mock("../../../common/utils/logger", () => ({
+  logBackendServiceError: jest.fn(),
+  logBackendServiceRequest: jest.fn(),
+  logBackendServiceResponse: jest.fn(),
+  error: jest.fn(),
+  trace: jest.fn(),
+  info: jest.fn(),
+  debug: jest.fn(),
 }));
 
-import { CreditCardAccountEntryViewReportService } from "../../../src/service/ccaev/creditCardAccountEntryViewService";
-import { CrossAccountAPICache } from "../../../common/cross_account/cached_api_information";
-import { CognitoTokenCache } from "../../../common/cognito/cached_cognito_token";
-
-// Mock AWS SDK modules
-jest.mock("@aws-sdk/client-secrets-manager", () => ({
-  SecretsManagerClient: jest.fn(() => ({
-    send: jest.fn().mockResolvedValue({
-      SecretString: JSON.stringify({
-        clientId: "test-client-id",
-        clientSecret: "test-client-secret",
-      }),
+// Mock CrossAccountAPICache
+jest.mock("../../../common/cross_account/cached_api_information", () => ({
+  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+    Value: jest.fn().mockResolvedValue({
+      apiKey: "mock-api-key",
+      apiGatewayId: "mock-gateway-id",
     }),
   })),
 }));
 
-jest.mock("@aws-sdk/client-sts", () => ({
-  STSClient: jest.fn(() => ({
-    send: jest.fn().mockResolvedValue({
-      Credentials: {
-        AccessKeyId: "mock-access-key",
-        SecretAccessKey: "mock-secret-key",
-        SessionToken: "mock-session-token",
-        Expiration: new Date(),
-      },
-    }),
+// Mock CognitoTokenCache
+jest.mock("../../../common/cognito/cached_cognito_token", () => ({
+  CognitoTokenCache: jest.fn().mockImplementation(() => ({
+    Value: jest.fn().mockResolvedValue("mock-token"),
   })),
 }));
 
-jest.mock("@aws-sdk/client-ssm", () => ({
-  SSMClient: jest.fn(() => ({
-    send: jest.fn().mockResolvedValue({
-      Parameter: { Value: "mock-param-value" },
-    }),
-  })),
-}));
-
-// Mock the CrossAccountAPICache
-jest.mock("../../../common/cross_account/cached_api_information");
-const MockedCrossAccountAPICache = CrossAccountAPICache as jest.MockedClass<typeof CrossAccountAPICache>;
-
-// Mock the CognitoTokenCache
-jest.mock("../../../common/cognito/cached_cognito_token");
-const MockedCognitoTokenCache = CognitoTokenCache as jest.MockedClass<typeof CognitoTokenCache>;
-
-describe("CreditCardAccountEntryViewReportService", () => {
-  const mockCorrelationId = "test-correlation-789";
-  let service: CreditCardAccountEntryViewReportService;
+describe("CreditCardAccountAuthorizationService Tests", () => {
+  let service: CreditCardAccountAuthorizationService;
+  const mockCorrelationId = "test-correlation-id";
 
   beforeEach(() => {
-    // Reset all mocks
-    jest.resetAllMocks();
-
-    // Set up environment variables
+    // Set required environment variables
     process.env = {
       crossRegion: "us-east-1",
       REGION: "us-east-1",
-      CrossAccountRoleForCCAEV: "test-role", // Updated role name
-      ssmParamCcaevGatewayId: "test-gateway-id", // Updated param name
-      cachedCognitoTokenSecretName: "test-cognito-secret",
+      crossAccountRoleForCCAA: "test-role",
+      ssmParamCcaaGatewayId: "test-gateway-id",
+      getPendingCCTransactionsUrl: "http://mock-url",
+      cachedCognitoTokenSecretName: "test-secret-name",
       cognitoSecretArn: "test-secret-arn",
-      getPostedCCTransactionsUrl: "http://mock-api-url", // Added missing URL
-      awsProxySgUrl: "http://mock-proxy-url" // Added proxy URL
+      awsProxySgUrl: "http://mock-proxy-url"
     };
 
-    // Mock CrossAccountAPICache implementation
-    MockedCrossAccountAPICache.mockImplementation(() => ({
-      Value: jest.fn().mockResolvedValue({
-        apiGatewayId: "mock-gateway-id",
-        apiKey: "mock-api-key"
-      })
-    }));
+    // Mock global fetch
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 200,
+      json: jest.fn().mockResolvedValue({ pendingTransactions: [] })
+    });
 
-    // Mock CognitoTokenCache implementation
-    MockedCognitoTokenCache.mockImplementation(() => ({
-      Value: jest.fn().mockResolvedValue("mock-cognito-token"),
-    }));
-
-    // Create new instance of service
-    service = new CreditCardAccountEntryViewReportService(mockCorrelationId);
+    // Clear all mocks
+    jest.clearAllMocks();
   });
 
   afterEach(() => {
     process.env = {};
   });
 
-  describe("getPostedCCTransactions", () => {
-    it("should retrieve posted transactions successfully", async () => {
-      // Mock fetch implementation
-      global.fetch = jest.fn().mockResolvedValue({
-        status: 200,
-        json: jest.fn().mockResolvedValue({ transactions: [] })
-      });
-
-      const result = await service.getPostedCCTransactions(
-        "test-account",
-        "2024-01-01",
-        "2024-01-31"
-      );
-
-      expect(result).toBeDefined();
-      expect(result).toHaveProperty("transactions");
-    });
-
-    it("should handle API errors appropriately", async () => {
-      // Mock fetch to return error
-      global.fetch = jest.fn().mockResolvedValue({
-        status: 500,
-        statusText: "Internal Server Error"
-      });
-
-      await expect(
-        service.getPostedCCTransactions("test-account", "2024-01-01", "2024-01-31")
-      ).rejects.toThrow();
-    });
+  test("should initialize service with default environment variables", () => {
+    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
+    expect(service).toBeDefined();
   });
 
-  describe("initialization", () => {
-    it("should initialize with empty environment variables", () => {
-      process.env = {};
-      const serviceWithNoEnv = new CreditCardAccountEntryViewReportService(mockCorrelationId);
-      expect(serviceWithNoEnv).toBeDefined();
+  test("should initialize service without environment variables", () => {
+    process.env = {};
+    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
+    expect(service).toBeDefined();
+  });
+
+  test("should get pending transactions", async () => {
+    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
+    const result = await service.getPendingCCTransactions("1234567890");
+    expect(result).toBeDefined();
+    expect(result).toHaveProperty("pendingTransactions");
+  });
+
+  test("should handle API errors appropriately", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 500,
+      statusText: "Internal Server Error"
     });
 
-    it("should initialize the service successfully", () => {
-      const testService = new CreditCardAccountEntryViewReportService(mockCorrelationId);
-      expect(testService).toBeDefined();
-    });
+    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
+    await expect(service.getPendingCCTransactions("1234567890")).rejects.toThrow();
+  });
+
+  test("should log trace messages in getPendingCCTransactions", async () => {
+    const mockTrace = require("../../../common/utils/logger").trace;
+
+    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
+    await service.getPendingCCTransactions("1234567890");
+
+    expect(mockTrace).toHaveBeenCalledWith(
+      "CreditCardAccountAuthorizationService - In getPendingCCTransactions....",
+      mockCorrelationId
+    );
+    expect(mockTrace).toHaveBeenCalledWith(
+      "CreditCardAccountAuthorizationService - Out getPendingCCTransactions.",
+      mockCorrelationId
+    );
+  });
+
+  test("should reuse existing API cache if available", () => {
+    const CrossAccountAPICache = require("../../../common/cross_account/cached_api_information")
+      .CrossAccountAPICache;
+
+    // Create first instance
+    const service1 = new CreditCardAccountAuthorizationService(mockCorrelationId);
+
+    // Reset mock to track new calls
+    CrossAccountAPICache.mockClear();
+
+    // Create second instance
+    const service2 = new CreditCardAccountAuthorizationService(mockCorrelationId);
+
+    // CrossAccountAPICache should not be called again
+    expect(CrossAccountAPICache).not.toHaveBeenCalled();
   });
 });
