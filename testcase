@@ -63,11 +63,9 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-
-// Mock AWS SDK modules
 jest.mock("@aws-sdk/util-dynamodb", () => ({
-  marshall: jest.fn().mockReturnValue({}),
-  unmarshall: jest.fn().mockReturnValue({})
+  marshall: jest.fn((input) => input),
+  unmarshall: jest.fn((input) => input)
 }));
 
 jest.mock("@aws-sdk/lib-dynamodb", () => ({
@@ -90,34 +88,34 @@ import { CreditCardDetailSessionDataService } from "../../../src/service/cardDet
 import { CardDetailSessionData } from "../../../src/model/cardDetail/cardDetailSessionData";
 import { DynamoDBAPIClient } from "../../../src/service/util/dynamoDbClient";
 import { ErrorCodes } from "../../../src/util/errorCodes";
+import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-// Mock DynamoDBAPIClient
+// Mock DynamoDB client
+const mockSend = jest.fn();
+const mockDbClient = {
+  dbDocumentClient: {
+    send: mockSend
+  }
+};
+
 jest.mock("../../../src/service/util/dynamoDbClient", () => ({
   DynamoDBAPIClient: {
-    getInstance: jest.fn().mockReturnValue({
-      dbDocumentClient: {
-        send: jest.fn().mockImplementation((command) => {
-          if (command instanceof QueryCommand) {
-            return Promise.resolve({
-              Items: [{
-                ecifId: "test-ecif",
-                transientCreditCardId: "test-session-1",
-                accountDetail: {},
-                ccarCustomerDetail: {},
-                ccarCardDetail: {}
-              }]
-            });
-          }
-          return Promise.resolve({});
-        })
-      }
-    })
+    getInstance: jest.fn().mockReturnValue(mockDbClient)
   }
 }));
 
 describe("CreditCardDetailSessionDataService", () => {
   let service: CreditCardDetailSessionDataService;
   const mockCorrelationId = "test-correlation-id";
+  const mockCardDetails: CardDetailSessionData = {
+    ecifId: "test-ecif",
+    transientCreditCardId: "test-id",
+    accountIndex: 1,
+    sessionId: "test-session",
+    accountDetail: {},
+    ccarCustomerDetail: {},
+    ccarCardDetail: {}
+  };
 
   beforeEach(() => {
     // Reset all mocks
@@ -126,54 +124,50 @@ describe("CreditCardDetailSessionDataService", () => {
     // Set up environment variables
     process.env.ccDetailDbTableName = "test-table";
 
+    // Mock successful DynamoDB responses
+    mockSend.mockImplementation((command) => {
+      if (command instanceof PutCommand) {
+        return Promise.resolve({});
+      }
+      if (command instanceof QueryCommand) {
+        return Promise.resolve({
+          Items: [mockCardDetails]
+        });
+      }
+      return Promise.resolve({});
+    });
+
     // Create service instance
     service = new CreditCardDetailSessionDataService(mockCorrelationId);
   });
 
   afterEach(() => {
-    // Clean up environment variables
     process.env = {};
+    jest.resetAllMocks();
   });
 
   describe("saveCardDetails", () => {
     it("should save card details successfully", async () => {
-      const mockCardDetails: CardDetailSessionData = {
-        ecifId: "test-ecif",
-        transientCreditCardId: "test-id",
-        accountIndex: 1,
-        sessionId: "test-session",
-        accountDetail: {},
-        ccarCustomerDetail: {},
-        ccarCardDetail: {}
-      };
-
       await service.saveCardDetails(mockCardDetails);
 
+      expect(mockSend).toHaveBeenCalled();
       expect(mockLogger.debug).toHaveBeenCalled();
       expect(mockLogger.info).toHaveBeenCalled();
     });
 
     it("should handle errors when saving card details", async () => {
-      // Mock DynamoDB client to throw error
-      const mockError = new Error("DB Error");
-      jest.spyOn(DynamoDBAPIClient.getInstance(mockCorrelationId).dbDocumentClient!, 'send')
-        .mockRejectedValueOnce(mockError);
+      // Mock error response
+      mockSend.mockRejectedValueOnce(new Error("DB Error"));
 
-      const mockCardDetails: CardDetailSessionData = {
-        ecifId: "test-ecif",
-        transientCreditCardId: "test-id",
-        accountIndex: 1,
-        sessionId: "test-session",
-        accountDetail: {},
-        ccarCustomerDetail: {},
-        ccarCardDetail: {}
-      };
+      await expect(service.saveCardDetails(mockCardDetails))
+        .rejects
+        .toThrow(ErrorCodes.SAVE_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
 
-      await expect(service.saveCardDetails(mockCardDetails)).rejects.toThrow(
-        ErrorCodes.SAVE_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining(ErrorCodes.SAVE_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage),
+        expect.any(Error),
+        mockCorrelationId
       );
-
-      expect(mockLogger.error).toHaveBeenCalled();
     });
   });
 
@@ -182,37 +176,37 @@ describe("CreditCardDetailSessionDataService", () => {
       const result = await service.fetchCardDetails("test-ecif", "test-session", 1);
 
       expect(result).toBeDefined();
+      expect(mockSend).toHaveBeenCalled();
       expect(mockLogger.debugWithSanitize).toHaveBeenCalled();
       expect(mockLogger.info).toHaveBeenCalled();
     });
 
     it("should return undefined when no items found", async () => {
       // Mock empty response
-      jest.spyOn(DynamoDBAPIClient.getInstance(mockCorrelationId).dbDocumentClient!, 'send')
-        .mockResolvedValueOnce({ Items: [] });
+      mockSend.mockResolvedValueOnce({ Items: [] });
 
       const result = await service.fetchCardDetails("test-ecif", "test-session", 1);
 
       expect(result).toBeUndefined();
       expect(mockLogger.error).toHaveBeenCalledWith(
-        "CreditCardDetailSessionDataService - ".concat(
-          ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_NO_ITEM.errorMessage
-        ),
+        expect.stringContaining(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_NO_ITEM.errorMessage),
         mockCorrelationId
       );
     });
 
     it("should handle errors when fetching card details", async () => {
-      // Mock DynamoDB client to throw error
-      const mockError = new Error("DB Error");
-      jest.spyOn(DynamoDBAPIClient.getInstance(mockCorrelationId).dbDocumentClient!, 'send')
-        .mockRejectedValueOnce(mockError);
+      // Mock error response
+      mockSend.mockRejectedValueOnce(new Error("DB Error"));
 
-      await expect(
-        service.fetchCardDetails("test-ecif", "test-session", 1)
-      ).rejects.toThrow(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+      await expect(service.fetchCardDetails("test-ecif", "test-session", 1))
+        .rejects
+        .toThrow(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
 
-      expect(mockLogger.error).toHaveBeenCalled();
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage),
+        expect.any(Error),
+        mockCorrelationId
+      );
     });
   });
 
