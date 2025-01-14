@@ -206,3 +206,112 @@ describe("CreditCardAccountAuthorizationService Tests", () => {
     expect(CrossAccountAPICache).not.toHaveBeenCalled();
   });
 });
+
+
+
+
+
+
+
+
+test("should handle API errors appropriately", async () => {
+  // Mock fetch to return error
+  global.fetch = jest.fn().mockResolvedValue({
+    status: 500,
+    statusText: "Internal Server Error"
+  });
+
+  service = new CreditCardAccountAuthorizationService(mockCorrelationId);
+  await expect(service.getPendingCCTransactions("1234567890"))
+    .rejects
+    .toThrow(ErrorCodes.CC_PENDING_TXNS_API_INVALID_RESPONSE_STATUS.errorMessage);
+});
+
+test("should log trace messages in getPendingCCTransactions", async () => {
+  // Setup mocks
+  const mockTrace = jest.fn();
+  jest.mock("../../../common/utils/logger", () => ({
+    ...jest.requireActual("../../../common/utils/logger"),
+    trace: mockTrace,
+    debug: jest.fn(),
+    debugWithSanitize: jest.fn(),
+    info: jest.fn(),
+    error: jest.fn(),
+    logBackendServiceRequest: jest.fn(),
+    logBackendServiceResponse: jest.fn(),
+    logBackendServiceError: jest.fn()
+  }));
+
+  // Mock successful API response
+  global.fetch = jest.fn().mockResolvedValue({
+    status: 200,
+    json: jest.fn().mockResolvedValue({ 
+      pendingTransactions: [],
+      requestListControl: {
+        limitCount: 200,
+        offset: 0
+      }
+    })
+  });
+
+  service = new CreditCardAccountAuthorizationService(mockCorrelationId);
+  
+  try {
+    await service.getPendingCCTransactions("1234567890");
+  } catch (error) {
+    // Handle any errors
+  }
+
+  // Verify the trace calls
+  expect(mockTrace).toHaveBeenCalledWith(
+    "CreditCardAccountAuthorizationService - In getPendingCCTransactions....",
+    mockCorrelationId
+  );
+  expect(mockTrace).toHaveBeenCalledWith(
+    "CreditCardAccountAuthorizationService - Out getPendingCCTransactions.",
+    mockCorrelationId
+  );
+});
+
+// Full test suite context...
+describe("CreditCardAccountAuthorizationService Tests", () => {
+  let service: CreditCardAccountAuthorizationService;
+  const mockCorrelationId = "test-correlation-id";
+
+  beforeEach(() => {
+    // Reset all mocks
+    jest.clearAllMocks();
+    jest.resetModules();
+
+    // Set required environment variables
+    process.env = {
+      crossRegion: "us-east-1",
+      REGION: "us-east-1",
+      crossAccountRoleForCCAA: "test-role",
+      ssmParamCcaaGatewayId: "test-gateway-id",
+      getPendingCCTransactionsUrl: "http://mock-url",
+      cachedCognitoTokenSecretName: "test-secret-name",
+      cognitoSecretArn: "test-secret-arn",
+      awsProxySgUrl: "http://mock-proxy-url"
+    };
+
+    // Mock global fetch default success response
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 200,
+      json: jest.fn().mockResolvedValue({ 
+        pendingTransactions: [],
+        requestListControl: {
+          limitCount: 200,
+          offset: 0
+        }
+      })
+    });
+  });
+
+  afterEach(() => {
+    process.env = {};
+    jest.resetModules();
+  });
+
+  // ... other test cases ...
+});
