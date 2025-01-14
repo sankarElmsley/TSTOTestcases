@@ -232,3 +232,107 @@ describe("CreditCardDetailSessionDataService", () => {
     });
   });
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+describe("saveCardDetails", () => {
+  it("should save card details successfully", async () => {
+    await service.saveCardDetails(mockCardDetails);
+    
+    expect(mockSendFunction).toHaveBeenCalled();
+    expect(mockLogger.debug).toHaveBeenCalled();
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.stringMatching(/CreditCardDetailSessionDataService - saveCardDetails to DB completed within: .* milliseconds/),
+      mockCorrelationId
+    );
+  });
+
+  it("should handle errors when saving card details", async () => {
+    mockSendFunction.mockRejectedValueOnce(new Error("DB Error"));
+
+    await expect(service.saveCardDetails(mockCardDetails))
+      .rejects
+      .toThrow(ErrorCodes.SAVE_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      "CreditCardDetailSessionDataService - Unexpected error while storing the creditcard detail to temporary storage",
+      expect.any(Error),
+      mockCorrelationId
+    );
+  });
+});
+
+describe("fetchCardDetails", () => {
+  it("should fetch card details successfully", async () => {
+    // Setup mock response
+    mockSendFunction.mockResolvedValueOnce({
+      Items: [{
+        ecifId: "test-ecif",
+        transientCreditCardId: "test-session-1",
+        accountDetail: {},
+        ccarCustomerDetail: {},
+        ccarCardDetail: {}
+      }]
+    });
+
+    const result = await service.fetchCardDetails("test-ecif", "test-session", 1);
+
+    expect(result).toBeDefined();
+    expect(mockSendFunction).toHaveBeenCalled();
+    expect(mockLogger.debugWithSanitize).toHaveBeenCalled();
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.stringMatching(/CreditCardDetailSessionDataService - fetchCardDetails completed within: .* milliseconds/),
+      mockCorrelationId
+    );
+  });
+
+  it("should return undefined when no items found", async () => {
+    mockSendFunction.mockResolvedValueOnce({ Items: [] });
+
+    const result = await service.fetchCardDetails("test-ecif", "test-session", 1);
+
+    expect(result).toBeUndefined();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      "CreditCardDetailSessionDataService - No items returned while fetching the creditcard detail from temporary storage",
+      mockCorrelationId
+    );
+  });
+
+  it("should handle errors when fetching card details", async () => {
+    mockSendFunction.mockRejectedValueOnce(new Error("DB Error"));
+
+    await expect(service.fetchCardDetails("test-ecif", "test-session", 1))
+      .rejects
+      .toThrow(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      "CreditCardDetailSessionDataService - Unexpected error while fetching the creditcard detail from temporary storage",
+      expect.any(Error),
+      mockCorrelationId
+    );
+  });
+});
