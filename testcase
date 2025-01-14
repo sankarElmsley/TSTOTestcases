@@ -63,22 +63,19 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { CreditCardDetailSessionDataService } from "../../../src/service/cardDetail/creditCardDetailSessionDataService";
-import { CardDetailSessionData } from "../../../src/model/cardDetail/cardDetailSessionData";
-import { ErrorCodes } from "../../../src/util/errorCodes";
+
+
+// First, import the modules we need for mocking
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-// Mock logger first
-const mockLogger = {
+// Then create the mocks before any imports that might use them
+jest.mock("../../../common/utils/logger", () => ({
   debug: jest.fn(),
   debugWithSanitize: jest.fn(),
   error: jest.fn(),
   info: jest.fn()
-};
+}));
 
-jest.mock("../../../common/utils/logger", () => mockLogger);
-
-// Mock AWS SDK modules
 jest.mock("@aws-sdk/util-dynamodb", () => ({
   marshall: jest.fn(input => input),
   unmarshall: jest.fn(input => input)
@@ -93,7 +90,7 @@ jest.mock("@aws-sdk/lib-dynamodb", () => ({
   })
 }));
 
-// Create mock send function
+// Mock send function
 const mockSendFunction = jest.fn();
 
 // Mock DynamoDBAPIClient
@@ -106,6 +103,14 @@ jest.mock("../../../src/service/util/dynamoDbClient", () => ({
     }))
   }
 }));
+
+// Now import the actual modules we're testing
+import { CreditCardDetailSessionDataService } from "../../../src/service/cardDetail/creditCardDetailSessionDataService";
+import { CardDetailSessionData } from "../../../src/model/cardDetail/cardDetailSessionData";
+import { ErrorCodes } from "../../../src/util/errorCodes";
+
+// Get the mocked logger instance
+const mockLogger = require("../../../common/utils/logger");
 
 describe("CreditCardDetailSessionDataService", () => {
   let service: CreditCardDetailSessionDataService;
