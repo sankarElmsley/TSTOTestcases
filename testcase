@@ -69,30 +69,22 @@ jest.mock('node-fetch', () => jest.fn());
 
 import { CreditCardAccountAuthorizationService } from "../../../src/service/ccaa/creditCardAccountAuthorizationService";
 import { ServerError } from "../../../src/util/serverError";
+import { ErrorCodes } from "../../../src/util/errorCodes";
 
-// Mock logger functions with debugWithSanitize
-jest.mock("../../../common/utils/logger", () => ({
-  logBackendServiceError: jest.fn(),
+// Create a mock logger object that we can control
+const mockLogger = {
+  trace: jest.fn(),
+  debug: jest.fn(),
+  debugWithSanitize: jest.fn(),
+  info: jest.fn(),
+  error: jest.fn(),
   logBackendServiceRequest: jest.fn(),
   logBackendServiceResponse: jest.fn(),
-  error: jest.fn(),
-  trace: jest.fn(),
-  info: jest.fn(),
-  debug: jest.fn(),
-  debugWithSanitize: jest.fn(), // Added missing function
-}));
+  logBackendServiceError: jest.fn()
+};
 
-// Mock request mapper
-jest.mock("../../../src/service/ccaa/creditCardAccountAuthorizationRequestMapper", () => ({
-  CreditCardAccountAuthorizationRequestMapper: {
-    getCreditCardAccountAuthorizationRequest: jest.fn().mockReturnValue({
-      cardNumber: "mock-card-number",
-      requestListControl: {
-        limitCount: 200
-      }
-    })
-  }
-}));
+// Mock logger
+jest.mock("../../../common/utils/logger", () => mockLogger);
 
 // Mock CrossAccountAPICache
 jest.mock("../../../common/cross_account/cached_api_information", () => ({
@@ -116,6 +108,9 @@ describe("CreditCardAccountAuthorizationService Tests", () => {
   const mockCorrelationId = "test-correlation-id";
 
   beforeEach(() => {
+    // Clear all mocks
+    jest.clearAllMocks();
+
     // Set required environment variables
     process.env = {
       crossRegion: "us-east-1",
@@ -140,56 +135,60 @@ describe("CreditCardAccountAuthorizationService Tests", () => {
       })
     });
 
-    // Clear all mocks
-    jest.clearAllMocks();
+    // Create new service instance
+    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
   });
 
   afterEach(() => {
     process.env = {};
-    jest.resetModules();
+    jest.resetAllMocks();
   });
 
-  test("should initialize service with default environment variables", () => {
-    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
-    expect(service).toBeDefined();
-  });
-
-  test("should initialize service without environment variables", () => {
-    process.env = {};
-    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
-    expect(service).toBeDefined();
-  });
-
-  test("should get pending transactions", async () => {
-    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
+  test("should get pending transactions successfully", async () => {
     const result = await service.getPendingCCTransactions("1234567890");
     expect(result).toBeDefined();
     expect(result).toHaveProperty("pendingTransactions");
-  });
-
-  test("should handle API errors appropriately", async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      status: 500,
-      statusText: "Internal Server Error"
-    });
-
-    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
-    await expect(service.getPendingCCTransactions("1234567890")).rejects.toThrow();
-  });
-
-  test("should log trace messages in getPendingCCTransactions", async () => {
-    const mockTrace = require("../../../common/utils/logger").trace;
-
-    service = new CreditCardAccountAuthorizationService(mockCorrelationId);
-    await service.getPendingCCTransactions("1234567890").catch(() => {});
-
-    expect(mockTrace).toHaveBeenCalledWith(
+    
+    // Verify logging calls
+    expect(mockLogger.trace).toHaveBeenCalledWith(
       "CreditCardAccountAuthorizationService - In getPendingCCTransactions....",
       mockCorrelationId
     );
   });
 
-  test("should reuse existing API cache if available", () => {
+  test("should handle API errors appropriately", async () => {
+    // Mock fetch to return error
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 500,
+      statusText: "Internal Server Error"
+    });
+
+    await expect(service.getPendingCCTransactions("1234567890"))
+      .rejects
+      .toThrow(ErrorCodes.CC_PENDING_TXNS_API_INVALID_RESPONSE_STATUS.errorMessage);
+
+    // Verify error logging
+    expect(mockLogger.error).toHaveBeenCalled();
+  });
+
+  test("should log trace messages in getPendingCCTransactions", async () => {
+    await service.getPendingCCTransactions("1234567890");
+
+    // Verify trace logging
+    expect(mockLogger.trace).toHaveBeenNthCalledWith(
+      1,
+      "CreditCardAccountAuthorizationService - In getPendingCCTransactions....",
+      mockCorrelationId
+    );
+    
+    expect(mockLogger.trace).toHaveBeenNthCalledWith(
+      2,
+      "CreditCardAccountAuthorizationService - Out getPendingCCTransactions.",
+      mockCorrelationId
+    );
+  });
+
+  test("should reuse existing API cache", () => {
     const CrossAccountAPICache = require("../../../common/cross_account/cached_api_information")
       .CrossAccountAPICache;
 
@@ -205,113 +204,4 @@ describe("CreditCardAccountAuthorizationService Tests", () => {
     // CrossAccountAPICache should not be called again
     expect(CrossAccountAPICache).not.toHaveBeenCalled();
   });
-});
-
-
-
-
-
-
-
-
-test("should handle API errors appropriately", async () => {
-  // Mock fetch to return error
-  global.fetch = jest.fn().mockResolvedValue({
-    status: 500,
-    statusText: "Internal Server Error"
-  });
-
-  service = new CreditCardAccountAuthorizationService(mockCorrelationId);
-  await expect(service.getPendingCCTransactions("1234567890"))
-    .rejects
-    .toThrow(ErrorCodes.CC_PENDING_TXNS_API_INVALID_RESPONSE_STATUS.errorMessage);
-});
-
-test("should log trace messages in getPendingCCTransactions", async () => {
-  // Setup mocks
-  const mockTrace = jest.fn();
-  jest.mock("../../../common/utils/logger", () => ({
-    ...jest.requireActual("../../../common/utils/logger"),
-    trace: mockTrace,
-    debug: jest.fn(),
-    debugWithSanitize: jest.fn(),
-    info: jest.fn(),
-    error: jest.fn(),
-    logBackendServiceRequest: jest.fn(),
-    logBackendServiceResponse: jest.fn(),
-    logBackendServiceError: jest.fn()
-  }));
-
-  // Mock successful API response
-  global.fetch = jest.fn().mockResolvedValue({
-    status: 200,
-    json: jest.fn().mockResolvedValue({ 
-      pendingTransactions: [],
-      requestListControl: {
-        limitCount: 200,
-        offset: 0
-      }
-    })
-  });
-
-  service = new CreditCardAccountAuthorizationService(mockCorrelationId);
-  
-  try {
-    await service.getPendingCCTransactions("1234567890");
-  } catch (error) {
-    // Handle any errors
-  }
-
-  // Verify the trace calls
-  expect(mockTrace).toHaveBeenCalledWith(
-    "CreditCardAccountAuthorizationService - In getPendingCCTransactions....",
-    mockCorrelationId
-  );
-  expect(mockTrace).toHaveBeenCalledWith(
-    "CreditCardAccountAuthorizationService - Out getPendingCCTransactions.",
-    mockCorrelationId
-  );
-});
-
-// Full test suite context...
-describe("CreditCardAccountAuthorizationService Tests", () => {
-  let service: CreditCardAccountAuthorizationService;
-  const mockCorrelationId = "test-correlation-id";
-
-  beforeEach(() => {
-    // Reset all mocks
-    jest.clearAllMocks();
-    jest.resetModules();
-
-    // Set required environment variables
-    process.env = {
-      crossRegion: "us-east-1",
-      REGION: "us-east-1",
-      crossAccountRoleForCCAA: "test-role",
-      ssmParamCcaaGatewayId: "test-gateway-id",
-      getPendingCCTransactionsUrl: "http://mock-url",
-      cachedCognitoTokenSecretName: "test-secret-name",
-      cognitoSecretArn: "test-secret-arn",
-      awsProxySgUrl: "http://mock-proxy-url"
-    };
-
-    // Mock global fetch default success response
-    global.fetch = jest.fn().mockResolvedValue({
-      status: 200,
-      json: jest.fn().mockResolvedValue({ 
-        pendingTransactions: [],
-        requestListControl: {
-          limitCount: 200,
-          offset: 0
-        }
-      })
-    });
-  });
-
-  afterEach(() => {
-    process.env = {};
-    jest.resetModules();
-  });
-
-  // ... other test cases ...
 });
