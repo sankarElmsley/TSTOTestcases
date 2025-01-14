@@ -359,3 +359,17 @@ module.exports = {
   },
   moduleFileExtensions: ['ts', 'js', 'json', 'node']
 };
+
+
+
+// Mock the logger
+jest.mock('../../src/common/logger', () => ({
+  trace: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  debug: jest.fn(),
+  warn: jest.fn()
+}));
+
+// If you need to access the mocked functions in your tests
+import { trace } from '../../src/common/logger';
