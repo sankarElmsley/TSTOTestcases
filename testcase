@@ -67,11 +67,37 @@ import fetch from 'node-fetch';
 
 import { CreditCardArrangementReportService } from '../../../src/service/ccar/creditCardArrangementReportService';
 import { ErrorCodes } from '../../../src/util/errorCodes';
+import CrossAccountAPICache from '../../../../common/cross account/cached_api_information';
 
-// Mock the dependencies
-jest.mock('../../../../common/cross account/cached_api_information');
-jest.mock('../../util/logging');
-jest.mock('./creditcardArrangementReportRequestMapper');
+// Mock CrossAccountAPICache
+jest.mock('../../../../common/cross account/cached_api_information', () => {
+    return jest.fn().mockImplementation(() => ({
+        Value: jest.fn().mockResolvedValue({
+            apiKey: 'mock-api-key',
+            apiGatewayId: 'mock-gateway-id'
+        })
+    }));
+});
+
+// Mock logging functions
+jest.mock('../../util/logging', () => ({
+    logBackendServiceError: jest.fn(),
+    logBackendServiceRequest: jest.fn(),
+    logBackendServiceResponse: jest.fn(),
+    error: jest.fn(),
+    trace: jest.fn(),
+    debug: jest.fn(),
+    info: jest.fn()
+}));
+
+// Mock CreditcardArrangementReportRequestMapper
+jest.mock('./creditcardArrangementReportRequestMapper', () => {
+    return jest.fn().mockImplementation(() => ({
+        getCreditcardAvailableBalanceRequest: jest.fn().mockReturnValue({ type: 'balance' }),
+        getCreditcardDetailsRequest: jest.fn().mockReturnValue({ type: 'details' }),
+        getCustomerDetailsRequest: jest.fn().mockReturnValue({ type: 'customer' })
+    }));
+});
 
 global.fetch = jest.fn();
 
@@ -141,7 +167,8 @@ describe('CreditCardArrangementReportService', () => {
 
         it('should handle API error responses', async () => {
             (global.fetch as jest.Mock).mockResolvedValueOnce({
-                status: 500
+                status: 500,
+                statusText: 'Internal Server Error'
             });
 
             await expect(service.getCreditCardDetail(false, mockCardNumber, mockTsysClientId))
