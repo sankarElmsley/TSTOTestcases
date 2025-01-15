@@ -68,8 +68,8 @@ import fetch from 'node-fetch';
 import { CreditCardArrangementReportService } from '../../../src/service/ccar/creditCardArrangementReportService';
 import { ErrorCodes } from '../../../src/util/errorCodes';
 
-// Mock logging functions
-jest.mock('../../util/logging', () => ({
+// Mock the logging functions
+jest.mock('../../../src/util/logging', () => ({
     logBackendServiceError: jest.fn(),
     logBackendServiceRequest: jest.fn(),
     logBackendServiceResponse: jest.fn(),
@@ -81,16 +81,15 @@ jest.mock('../../util/logging', () => ({
 
 // Mock CrossAccountAPICache
 jest.mock('../../../../common/cross account/cached_api_information', () => {
-    return jest.fn().mockImplementation(() => ({
-        Value: jest.fn().mockResolvedValue({
-            apiKey: 'mock-api-key',
-            apiGatewayId: 'mock-gateway-id'
-        })
-    }));
+    return class MockCrossAccountAPICache {
+        Value() {
+            return Promise.resolve({
+                apiKey: 'mock-api-key',
+                apiGatewayId: 'mock-gateway-id'
+            });
+        }
+    };
 });
-
-// Mock fetch
-global.fetch = jest.fn();
 
 describe('CreditCardArrangementReportService', () => {
     let service: CreditCardArrangementReportService;
@@ -99,24 +98,31 @@ describe('CreditCardArrangementReportService', () => {
     const mockTsysClientId = 'test-client-id';
 
     beforeEach(() => {
+        // Reset all mocks
         jest.clearAllMocks();
         
-        // Set environment variables
+        // Setup required environment variables
         process.env = {
-            crossRegion: 'test-region',
+            ...process.env,
+            CrossRegion: 'test-region',
             REGION: 'test-region',
             crossAccountRoleForCCAR: 'test-role',
-            ssmParamCcarApiKey: 'test-api-key',
-            smParamCcarGatewayId: 'test-gateway-id',
-            getCardDetailsUrl: 'http://test-url',
-            getCustomerDetailsUrl: 'http://test-url'
+            ssmParamCcarApiKey: 'test-param-key',
+            smParamCcarGatewayId: 'test-param-id',
+            getCardDetailsUrl: 'http://test-url/',
+            getCustomerDetailsUrl: 'http://test-url/'
         };
 
+        // Mock fetch globally
+        global.fetch = jest.fn();
+        
+        // Initialize service
         service = new CreditCardArrangementReportService(mockCorrelationId);
     });
 
     describe('getCreditCardDetail', () => {
-        it('should fetch card details successfully', async () => {
+        it('should fetch card details successfully when fetchAvailableBalanceAlone is false', async () => {
+            // Mock successful API response
             (global.fetch as jest.Mock).mockResolvedValueOnce({
                 status: 200,
                 json: () => Promise.resolve({
@@ -126,27 +132,50 @@ describe('CreditCardArrangementReportService', () => {
             });
 
             const result = await service.getCreditCardDetail(false, mockCardNumber, mockTsysClientId);
-            expect(result.status).toBe('S');
+            
+            expect(result).toEqual({
+                status: 'S',
+                data: { cardNumber: mockCardNumber }
+            });
+            expect(global.fetch).toHaveBeenCalledTimes(1);
+        });
+
+        it('should handle API error response', async () => {
+            (global.fetch as jest.Mock).mockResolvedValueOnce({
+                status: 500,
+                statusText: 'Internal Server Error'
+            });
+
+            await expect(
+                service.getCreditCardDetail(false, mockCardNumber, mockTsysClientId)
+            ).rejects.toThrow(ErrorCodes.CC_DETAILS_API_INVALID_RESPONSE_STATUS.errorMessage);
         });
     });
 
     describe('fetchCustomerDetails', () => {
         it('should fetch customer details successfully', async () => {
+            // Mock successful API response
             (global.fetch as jest.Mock).mockResolvedValueOnce({
                 status: 200,
                 json: () => Promise.resolve({
                     status: 'S',
-                    data: { customerId: '12345' }
+                    data: { customerId: 'test-customer' }
                 })
             });
 
             const result = await service.fetchCustomerDetails(mockCardNumber, mockTsysClientId);
-            expect(result.status).toBe('S');
+            
+            expect(result).toEqual({
+                status: 'S',
+                data: { customerId: 'test-customer' }
+            });
+            expect(global.fetch).toHaveBeenCalledTimes(1);
         });
     });
 
     afterEach(() => {
-        jest.clearAllMocks();
+        // Clean up
+        jest.resetModules();
         process.env = {};
     });
 });
