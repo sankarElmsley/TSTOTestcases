@@ -63,7 +63,6 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-
 import { CreditCardArrangementReportService } from '../../../src/service/ccar/creditCardArrangementReportService';
 import { ErrorCodes } from '../../../src/util/errorCodes';
 import { ServerError } from '../../../src/util/serverError';
@@ -79,42 +78,23 @@ jest.mock('../../../src/util/logging', () => ({
     info: jest.fn()
 }));
 
-// Mock CrossAccountAPICache with proper type handling
-jest.mock('../../../../common/cross account/cached_api_information', () => {
-    class MockCrossAccountAPICache {
-        constructor(
-            crossRegion: string,
-            crossAccountRoleRegion: string,
-            crossAccountRole: string,
-            singleAccountAPIKeyName: string,
-            singleAccountAPIGatewayIDName: string,
-            cacheTimeToLifeMS: number
-        ) {
-            // Validate required parameters
-            if (!crossAccountRoleRegion) {
-                throw new Error('REGION is required');
-            }
-        }
-
-        Value() {
-            return Promise.resolve({
-                apiKey: 'mock-api-key',
-                apiGatewayId: 'mock-gateway-id'
-            });
-        }
-    }
-
-    return {
-        __esModule: true,
-        default: MockCrossAccountAPICache
-    };
-});
+// Mock CrossAccountAPICache
+jest.mock('../../../../common/cross account/cached_api_information', () => ({
+    __esModule: true,
+    default: jest.fn().mockImplementation(() => ({
+        Value: jest.fn().mockResolvedValue({
+            apiKey: 'mock-api-key',
+            apiGatewayId: 'mock-gateway-id'
+        })
+    }))
+}));
 
 describe('CreditCardArrangementReportService Tests', () => {
     let service: CreditCardArrangementReportService;
     const mockCorrelationId = 'test-correlation-id';
     const mockCardNumber = '1234567890123456';
     const mockTsysClientId = 'test-client-id';
+    const CrossAccountAPICache = require('../../../../common/cross account/cached_api_information').default;
 
     beforeEach(() => {
         jest.clearAllMocks();
@@ -123,13 +103,32 @@ describe('CreditCardArrangementReportService Tests', () => {
         process.env = {
             ...process.env,
             CrossRegion: 'us-east-1',
-            REGION: 'us-east-1',  // This is critical
+            REGION: 'us-east-1',
             crossAccountRoleForCCAR: 'test-role',
             ssmParamCcarApiKey: 'test-api-key',
             smParamCcarGatewayId: 'test-gateway-id',
             getCardDetailsUrl: 'http://test-url',
             getCustomerDetailsUrl: 'http://test-url'
         };
+
+        // Reset the mock implementation
+        CrossAccountAPICache.mockImplementation((
+            crossRegion,
+            crossAccountRoleRegion,
+            crossAccountRole,
+            singleAccountAPIKeyName,
+            singleAccountAPIGatewayIDName
+        ) => {
+            if (!crossAccountRoleRegion) {
+                throw new Error('REGION is required');
+            }
+            return {
+                Value: jest.fn().mockResolvedValue({
+                    apiKey: 'mock-api-key',
+                    apiGatewayId: 'mock-gateway-id'
+                })
+            };
+        });
 
         // Mock global fetch
         global.fetch = jest.fn();
