@@ -69,30 +69,32 @@ import { CreditCardArrangementReportService } from '../../../src/service/ccar/cr
 import { ErrorCodes } from '../../../src/util/errorCodes';
 import CrossAccountAPICache from '../../../../common/cross account/cached_api_information';
 
-// Mock CrossAccountAPICache
-const mockValue = jest.fn().mockResolvedValue({
-    apiKey: 'mock-api-key',
-    apiGatewayId: 'mock-gateway-id'
-});
+// Create mock apiInfoCache
+let apiInfoCache: any;
 
+// Mock CrossAccountAPICache
 jest.mock('../../../../common/cross account/cached_api_information', () => {
     return jest.fn().mockImplementation(() => ({
-        Value: mockValue
+        Value: jest.fn().mockResolvedValue({
+            apiKey: 'mock-api-key',
+            apiGatewayId: 'mock-gateway-id'
+        })
     }));
 });
 
-// Mock logging
+// Mock logging functions
+const mockError = jest.fn();
 jest.mock('../../util/logging', () => ({
     logBackendServiceError: jest.fn(),
     logBackendServiceRequest: jest.fn(),
     logBackendServiceResponse: jest.fn(),
-    error: jest.fn(),
+    error: mockError,
     trace: jest.fn(),
     debug: jest.fn(),
     info: jest.fn()
 }));
 
-// Mock global fetch
+// Mock fetch
 global.fetch = jest.fn();
 
 describe('CreditCardArrangementReportService', () => {
@@ -102,20 +104,33 @@ describe('CreditCardArrangementReportService', () => {
     const mockTsysClientId = 'test-client-id';
 
     beforeEach(() => {
-        // Clear all mocks
         jest.clearAllMocks();
         
-        // Set environment variables exactly as used in the service
-        process.env.CrossRegion = 'test-region';  // matches crossRegion
-        process.env.REGION = 'test-region';       // matches crossAccountRoleRegion
-        process.env.crossAccountRoleForCCAR = 'test-role';  // matches crossAccountRole
-        process.env.ssmParamCcarApiKey = 'test-api-key';    // matches singleAccountAPIKeyName
-        process.env.ssmParamCcarGatewayId = 'test-gateway-id'; // matches singleAccountAPIGatewayIDName
-        process.env.getCardDetailsUrl = 'http://test-url';
-        process.env.getCustomerDetailsUrl = 'http://test-url';
+        // Reset mocks
+        (CrossAccountAPICache as jest.Mock).mockClear();
+        mockError.mockClear();
 
-        // Initialize service
+        // Set environment variables
+        Object.assign(process.env, {
+            crossRegion: 'test-region',
+            REGION: 'test-region',
+            crossAccountRoleForCCAR: 'test-role',
+            ssmParamCcarApiKey: 'test-api-key',
+            smParamCcarGatewayId: 'test-gateway-id',
+            getCardDetailsUrl: 'http://test-url',
+            getCustomerDetailsUrl: 'http://test-url'
+        });
+
+        // Instantiate service and manually initialize apiInfoCache
         service = new CreditCardArrangementReportService(mockCorrelationId);
+        apiInfoCache = new CrossAccountAPICache(
+            process.env.crossRegion || '',
+            process.env.REGION || '',
+            process.env.crossAccountRoleForCCAR || '',
+            process.env.ssmParamCcarApiKey || '',
+            process.env.smParamCcarGatewayId || '',
+            60 * 60 * 1000
+        );
     });
 
     describe('getCreditCardDetail', () => {
@@ -139,8 +154,7 @@ describe('CreditCardArrangementReportService', () => {
 
         it('should handle API error responses', async () => {
             (global.fetch as jest.Mock).mockResolvedValueOnce({
-                status: 500,
-                statusText: 'Internal Server Error'
+                status: 500
             });
 
             await expect(service.getCreditCardDetail(false, mockCardNumber, mockTsysClientId))
@@ -170,8 +184,7 @@ describe('CreditCardArrangementReportService', () => {
 
         it('should handle failed customer details response', async () => {
             const mockResponse = {
-                status: 'F',
-                errorMessage: 'Failed to fetch customer details'
+                status: 'F'
             };
 
             (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -196,5 +209,6 @@ describe('CreditCardArrangementReportService', () => {
     afterEach(() => {
         jest.clearAllMocks();
         process.env = {};
+        apiInfoCache = null;
     });
 });
