@@ -64,11 +64,11 @@ import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilitySe
 import fetch from 'node-fetch';
 
 
-
 import { CreditCardArrangementReportService } from '../../../src/service/ccar/creditCardArrangementReportService';
 import { ErrorCodes } from '../../../src/util/errorCodes';
+import { ServerError } from '../../../src/util/serverError';
 
-// Mock the logging functions
+// Mock logger functions
 jest.mock('../../../src/util/logging', () => ({
     logBackendServiceError: jest.fn(),
     logBackendServiceRequest: jest.fn(),
@@ -80,49 +80,76 @@ jest.mock('../../../src/util/logging', () => ({
 }));
 
 // Mock CrossAccountAPICache
-jest.mock('../../../../common/cross account/cached_api_information', () => {
-    return class MockCrossAccountAPICache {
-        Value() {
-            return Promise.resolve({
-                apiKey: 'mock-api-key',
-                apiGatewayId: 'mock-gateway-id'
-            });
-        }
-    };
-});
+jest.mock('../../../../common/cross account/cached_api_information', () => ({
+    __esModule: true,
+    default: jest.fn().mockImplementation(() => ({
+        Value: jest.fn().mockResolvedValue({
+            apiKey: 'mock-api-key',
+            apiGatewayId: 'mock-gateway-id'
+        })
+    }))
+}));
 
-describe('CreditCardArrangementReportService', () => {
+describe('CreditCardArrangementReportService Tests', () => {
     let service: CreditCardArrangementReportService;
     const mockCorrelationId = 'test-correlation-id';
     const mockCardNumber = '1234567890123456';
     const mockTsysClientId = 'test-client-id';
 
     beforeEach(() => {
-        // Reset all mocks
+        // Clear all mocks
         jest.clearAllMocks();
         
-        // Setup required environment variables
-        process.env = {
-            ...process.env,
-            CrossRegion: 'test-region',
-            REGION: 'test-region',
-            crossAccountRoleForCCAR: 'test-role',
-            ssmParamCcarApiKey: 'test-param-key',
-            smParamCcarGatewayId: 'test-param-id',
-            getCardDetailsUrl: 'http://test-url/',
-            getCustomerDetailsUrl: 'http://test-url/'
-        };
+        // Set required environment variables
+        process.env.CrossRegion = 'us-east-1';
+        process.env.REGION = 'us-east-1';
+        process.env.crossAccountRoleForCCAR = 'test-role';
+        process.env.ssmParamCcarApiKey = 'test-api-key';
+        process.env.smParamCcarGatewayId = 'test-gateway-id';
+        process.env.getCardDetailsUrl = 'http://test-url';
+        process.env.getCustomerDetailsUrl = 'http://test-url';
 
-        // Mock fetch globally
+        // Mock global fetch
         global.fetch = jest.fn();
-        
-        // Initialize service
+    });
+
+    afterEach(() => {
+        // Clean up environment variables
+        delete process.env.CrossRegion;
+        delete process.env.REGION;
+        delete process.env.crossAccountRoleForCCAR;
+        delete process.env.ssmParamCcarApiKey;
+        delete process.env.smParamCcarGatewayId;
+        delete process.env.getCardDetailsUrl;
+        delete process.env.getCustomerDetailsUrl;
+    });
+
+    test('should initialize service with default env vars', () => {
         service = new CreditCardArrangementReportService(mockCorrelationId);
+        expect(service).toBeDefined();
+    });
+
+    test('should handle API cache initialization error', () => {
+        const mockError = new Error('Cache initialization failed');
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        
+        require('../../../../common/cross account/cached_api_information').default.mockImplementation(() => {
+            throw mockError;
+        });
+
+        expect(() => {
+            new CreditCardArrangementReportService(mockCorrelationId);
+        }).toThrow(ServerError);
+
+        expect(console.error).toHaveBeenCalled();
     });
 
     describe('getCreditCardDetail', () => {
-        it('should fetch card details successfully when fetchAvailableBalanceAlone is false', async () => {
-            // Mock successful API response
+        beforeEach(() => {
+            service = new CreditCardArrangementReportService(mockCorrelationId);
+        });
+
+        test('should fetch card details successfully when fetchAvailableBalanceAlone is false', async () => {
             (global.fetch as jest.Mock).mockResolvedValueOnce({
                 status: 200,
                 json: () => Promise.resolve({
@@ -140,7 +167,7 @@ describe('CreditCardArrangementReportService', () => {
             expect(global.fetch).toHaveBeenCalledTimes(1);
         });
 
-        it('should handle API error response', async () => {
+        test('should handle API error response', async () => {
             (global.fetch as jest.Mock).mockResolvedValueOnce({
                 status: 500,
                 statusText: 'Internal Server Error'
@@ -153,8 +180,11 @@ describe('CreditCardArrangementReportService', () => {
     });
 
     describe('fetchCustomerDetails', () => {
-        it('should fetch customer details successfully', async () => {
-            // Mock successful API response
+        beforeEach(() => {
+            service = new CreditCardArrangementReportService(mockCorrelationId);
+        });
+
+        test('should fetch customer details successfully', async () => {
             (global.fetch as jest.Mock).mockResolvedValueOnce({
                 status: 200,
                 json: () => Promise.resolve({
@@ -171,11 +201,5 @@ describe('CreditCardArrangementReportService', () => {
             });
             expect(global.fetch).toHaveBeenCalledTimes(1);
         });
-    });
-
-    afterEach(() => {
-        // Clean up
-        jest.resetModules();
-        process.env = {};
     });
 });
