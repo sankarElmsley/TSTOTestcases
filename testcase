@@ -79,30 +79,34 @@ jest.mock('../../../src/util/logging', () => ({
     info: jest.fn()
 }));
 
-// Mock CrossAccountAPICache with more detailed implementation
+// Mock CrossAccountAPICache with proper type handling
 jest.mock('../../../../common/cross account/cached_api_information', () => {
-    return {
-        __esModule: true,
-        default: jest.fn().mockImplementation((
+    class MockCrossAccountAPICache {
+        constructor(
             crossRegion: string,
             crossAccountRoleRegion: string,
             crossAccountRole: string,
             singleAccountAPIKeyName: string,
             singleAccountAPIGatewayIDName: string,
             cacheTimeToLifeMS: number
-        ) => {
+        ) {
             // Validate required parameters
             if (!crossAccountRoleRegion) {
                 throw new Error('REGION is required');
             }
-            
-            return {
-                Value: jest.fn().mockResolvedValue({
-                    apiKey: 'mock-api-key',
-                    apiGatewayId: 'mock-gateway-id'
-                })
-            };
-        })
+        }
+
+        Value() {
+            return Promise.resolve({
+                apiKey: 'mock-api-key',
+                apiGatewayId: 'mock-gateway-id'
+            });
+        }
+    }
+
+    return {
+        __esModule: true,
+        default: MockCrossAccountAPICache
     };
 });
 
@@ -177,6 +181,17 @@ describe('CreditCardArrangementReportService Tests', () => {
             expect(result.status).toBe('S');
             expect(result.data.cardNumber).toBe(mockCardNumber);
         });
+
+        test('should handle API error response', async () => {
+            (global.fetch as jest.Mock).mockResolvedValueOnce({
+                status: 500,
+                statusText: 'Internal Server Error'
+            });
+
+            await expect(
+                service.getCreditCardDetail(false, mockCardNumber, mockTsysClientId)
+            ).rejects.toThrow(ErrorCodes.CC_DETAILS_API_INVALID_RESPONSE_STATUS.errorMessage);
+        });
     });
 
     describe('fetchCustomerDetails', () => {
@@ -195,6 +210,17 @@ describe('CreditCardArrangementReportService Tests', () => {
 
             const result = await service.fetchCustomerDetails(mockCardNumber, mockTsysClientId);
             expect(result.status).toBe('S');
+        });
+
+        test('should handle API error response', async () => {
+            (global.fetch as jest.Mock).mockResolvedValueOnce({
+                status: 500,
+                statusText: 'Internal Server Error'
+            });
+
+            await expect(
+                service.fetchCustomerDetails(mockCardNumber, mockTsysClientId)
+            ).rejects.toThrow(ErrorCodes.CUSTOMER_DETAILS_API_INVALID_RESPONSE_STATUS.errorMessage);
         });
     });
 });
