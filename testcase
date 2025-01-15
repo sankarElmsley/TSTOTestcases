@@ -198,3 +198,167 @@ describe("CreditCardDetailSessionDataService", () => {
     });
   });
 });
+
+
+
+
+
+
+
+
+
+
+import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import { CreditCardDetailSessionDataService } from "../../../src/service/ctccd/creditCardDetailSessionDataService";
+import { CardDetailSessionData } from "../../../src/model/cardDetail/cardDetailSessionData";
+import { ErrorCodes } from "../../../src/util/errorCodes";
+import { DynamoDBAPIClient } from "../../../src/service/util/dynamoDbClient";
+import { ServerError } from "../../../src/util/serverError";
+
+// Mock logger functions
+const mockError = jest.fn();
+jest.mock("../../../common/utils/logger", () => ({
+  debug: jest.fn(),
+  debugWithSanitize: jest.fn(),
+  error: jest.fn().mockImplementation((...args) => mockError(...args)),
+  info: jest.fn(),
+  trace: jest.fn(),
+  logBackendServiceRequest: jest.fn(),
+  logBackendServiceError: jest.fn(),
+  logBackendServiceResponse: jest.fn(),
+}));
+
+// Mock AWS SDK utilities
+jest.mock("@aws-sdk/util-dynamodb", () => ({
+  marshall: jest.fn().mockImplementation(input => input),
+  unmarshall: jest.fn().mockImplementation(input => input),
+}));
+
+// Mock AWS DynamoDB commands
+jest.mock("@aws-sdk/lib-dynamodb", () => ({
+  PutCommand: jest.fn().mockImplementation(params => ({ input: params })),
+  QueryCommand: jest.fn().mockImplementation(params => ({ input: params })),
+}));
+
+// Mock DynamoDBAPIClient
+const mockSendFunction = jest.fn();
+jest.mock("../../../src/service/util/dynamoDbClient", () => ({
+  DynamoDBAPIClient: {
+    getInstance: jest.fn().mockImplementation(() => ({
+      dbDocumentClient: { send: mockSendFunction },
+    })),
+  },
+}));
+
+describe("CreditCardDetailSessionDataService", () => {
+  let service: CreditCardDetailSessionDataService;
+  const mockCorrelationId = "test-correlation-id";
+  const mockEcifId = "test-ecif";
+  const mockSessionId = "test-session";
+  const mockAccountIndex = 1;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.ccDetailDbTableName = "test-table";
+    
+    // Reset all mocks
+    mockError.mockClear();
+    mockSendFunction.mockClear();
+
+    service = new CreditCardDetailSessionDataService(mockCorrelationId);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    process.env = {};
+  });
+
+  describe("fetchCardDetails", () => {
+    it("should fetch card details successfully", async () => {
+      // Mock successful response with valid data
+      mockSendFunction.mockImplementation(() => Promise.resolve({
+        Items: [{
+          ecifId: mockEcifId,
+          sessionId: mockSessionId,
+          accountIndex: mockAccountIndex,
+          transientCreditCardId: "test-id",
+          accountDetail: { someDetail: "test" },
+          ccarCustomerDetail: { someCustomer: "test" },
+          ccarCardDetail: { someCard: "test" }
+        }],
+        Count: 1
+      }));
+
+      const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+
+      expect(result).toBeDefined();
+      expect(result.ecifId).toBe(mockEcifId);
+      expect(result.sessionId).toBe(mockSessionId);
+      expect(result.accountIndex).toBe(mockAccountIndex);
+    });
+
+    it("should handle unexpected error while fetching credit card details", async () => {
+      // Mock an unexpected response format to trigger the error
+      mockSendFunction.mockImplementation(() => Promise.resolve({
+        Items: [{ 
+          // Missing required fields
+          someOtherField: "unexpected"
+        }]
+      }));
+
+      await expect(
+        service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex)
+      ).rejects.toThrow(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining("Unexpected error while fecthing the creditcard detail from temporary storage"),
+        expect.any(Error),
+        mockCorrelationId
+      );
+    });
+
+    it("should handle empty response", async () => {
+      mockSendFunction.mockResolvedValueOnce({
+        Items: [],
+      });
+
+      const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+
+      expect(result).toBeUndefined();
+      expect(mockError).toHaveBeenCalledWith(
+        "CreditCardDetailSessionDataService - No items returned while fecthing the creditcard detail from temporary storage : TCCD-1032",
+        undefined,
+        mockCorrelationId
+      );
+    });
+
+    it("should handle DynamoDB error", async () => {
+      const dbError = new Error("DynamoDB error");
+      mockSendFunction.mockRejectedValueOnce(dbError);
+
+      await expect(service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex))
+        .rejects
+        .toThrow(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+
+      expect(mockError).toHaveBeenCalledWith(
+        "CreditCardDetailSessionDataService - " + ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage,
+        dbError,
+        mockCorrelationId
+      );
+    });
+
+    it("should handle null response", async () => {
+      mockSendFunction.mockResolvedValueOnce(null);
+
+      const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+
+      expect(result).toBeUndefined();
+      expect(mockError).toHaveBeenCalledWith(
+        "CreditCardDetailSessionDataService - No items returned while fecthing the creditcard detail from temporary storage : TCCD-1032",
+        undefined,
+        mockCorrelationId
+      );
+    });
+  });
+});
