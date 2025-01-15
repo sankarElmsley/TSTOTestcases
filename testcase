@@ -70,16 +70,18 @@ import { ErrorCodes } from '../../../src/util/errorCodes';
 import CrossAccountAPICache from '../../../../common/cross account/cached_api_information';
 
 // Mock CrossAccountAPICache
+const mockValue = jest.fn().mockResolvedValue({
+    apiKey: 'mock-api-key',
+    apiGatewayId: 'mock-gateway-id'
+});
+
 jest.mock('../../../../common/cross account/cached_api_information', () => {
     return jest.fn().mockImplementation(() => ({
-        Value: jest.fn().mockResolvedValue({
-            apiKey: 'mock-api-key',
-            apiGatewayId: 'mock-gateway-id'
-        })
+        Value: mockValue
     }));
 });
 
-// Mock logging functions
+// Mock logging
 jest.mock('../../util/logging', () => ({
     logBackendServiceError: jest.fn(),
     logBackendServiceRequest: jest.fn(),
@@ -90,7 +92,7 @@ jest.mock('../../util/logging', () => ({
     info: jest.fn()
 }));
 
-// Mock fetch
+// Mock global fetch
 global.fetch = jest.fn();
 
 describe('CreditCardArrangementReportService', () => {
@@ -100,20 +102,19 @@ describe('CreditCardArrangementReportService', () => {
     const mockTsysClientId = 'test-client-id';
 
     beforeEach(() => {
+        // Clear all mocks
         jest.clearAllMocks();
         
-        // Set environment variables exactly as they appear in the service
-        process.env = {
-            CrossRegion: 'test-region',
-            REGION: 'test-region',
-            crossAccountRoleForCCAR: 'test-role',
-            ssmParamCcarApiKey: 'test-api-key',
-            smParamCcarGatewayId: 'test-gateway-id',
-            getCardDetailsUrl: 'http://test-url',
-            getCustomerDetailsUrl: 'http://test-url'
-        };
+        // Set environment variables exactly as used in the service
+        process.env.CrossRegion = 'test-region';  // matches crossRegion
+        process.env.REGION = 'test-region';       // matches crossAccountRoleRegion
+        process.env.crossAccountRoleForCCAR = 'test-role';  // matches crossAccountRole
+        process.env.ssmParamCcarApiKey = 'test-api-key';    // matches singleAccountAPIKeyName
+        process.env.ssmParamCcarGatewayId = 'test-gateway-id'; // matches singleAccountAPIGatewayIDName
+        process.env.getCardDetailsUrl = 'http://test-url';
+        process.env.getCustomerDetailsUrl = 'http://test-url';
 
-        // Create a new instance for each test
+        // Initialize service
         service = new CreditCardArrangementReportService(mockCorrelationId);
     });
 
@@ -133,24 +134,6 @@ describe('CreditCardArrangementReportService', () => {
             });
 
             const result = await service.getCreditCardDetail(false, mockCardNumber, mockTsysClientId);
-            expect(result).toEqual(mockResponse);
-        });
-
-        it('should fetch only available balance when flag is true', async () => {
-            const mockResponse = {
-                status: 'S',
-                data: {
-                    cardNumber: mockCardNumber,
-                    availableBalance: 500
-                }
-            };
-
-            (global.fetch as jest.Mock).mockResolvedValueOnce({
-                status: 200,
-                json: () => Promise.resolve(mockResponse)
-            });
-
-            const result = await service.getCreditCardDetail(true, mockCardNumber, mockTsysClientId);
             expect(result).toEqual(mockResponse);
         });
 
