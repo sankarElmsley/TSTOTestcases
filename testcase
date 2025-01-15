@@ -65,92 +65,151 @@ import fetch from 'node-fetch';
 
 
 
-import { CreditCardDetailSessionDataService } from '../../../src/service/ctccd/creditCardDetailSessionDataService';
-import { mockClear, mockReset } from 'jest-mock-extended';
+import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import { CreditCardDetailSessionDataService } from "../../../src/service/ctccd/creditCardDetailSessionDataService";
+import { CardDetailSessionData } from "../../../src/model/cardDetail/cardDetailSessionData";
+import { ErrorCodes } from "../../../src/util/errorCodes";
+import { DynamoDBAPIClient } from "../../../src/service/util/dynamoDbClient";
 
-// Mock the dependencies
-jest.mock('../../../src/util/logging');
-jest.mock('../../../src/util/temporaryStorage');
+// Mock logger functions
+jest.mock("../../../common/utils/logger", () => ({
+  debug: jest.fn(),
+  debugWithSanitize: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  trace: jest.fn(),
+  logBackendServiceRequest: jest.fn(),
+  logBackendServiceError: jest.fn(),
+  logBackendServiceResponse: jest.fn(),
+}));
 
-// Import the mocked dependencies
-import { getFromTemporaryStorage } from '../../../src/util/temporaryStorage';
+// Mock AWS SDK utilities
+jest.mock("@aws-sdk/util-dynamodb", () => ({
+  marshall: jest.fn().mockImplementation((input) => input),
+  unmarshall: jest.fn().mockImplementation((input) => input),
+}));
 
-describe('CreditCardDetailSessionDataService', () => {
-    const mockSessionId = 'test-session-id';
-    const mockEcifId = 'test-ecif-id';
-    const mockCorrelationId = 'test-correlation-id';
-    let service: CreditCardDetailSessionDataService;
+// Mock AWS DynamoDB commands
+jest.mock("@aws-sdk/lib-dynamodb", () => {
+  return {
+    PutCommand: jest.fn().mockImplementation((params) => ({
+      input: params,
+    })),
+    QueryCommand: jest.fn().mockImplementation((params) => ({
+      input: params,
+    })),
+  };
+});
 
-    beforeEach(() => {
-        // Clear all mocks before each test
-        jest.clearAllMocks();
-        
-        // Initialize the service
-        service = new CreditCardDetailSessionDataService(
-            mockSessionId,
-            mockEcifId,
-            mockCorrelationId
-        );
+// Mock DynamoDBAPIClient
+const mockSendFunction = jest.fn();
+jest.mock("../../../src/service/util/dynamoDbClient", () => ({
+  DynamoDBAPIClient: {
+    getInstance: jest.fn().mockImplementation(() => ({
+      dbDocumentClient: { send: mockSendFunction },
+    })),
+  },
+}));
+
+describe("CreditCardDetailSessionDataService", () => {
+  let service: CreditCardDetailSessionDataService;
+  const mockCorrelationId = "test-correlation-id";
+
+  const mockCardDetails: CardDetailSessionData = {
+    ecifId: "test-ecif",
+    transientCreditCardId: "test-id",
+    accountIndex: 1,
+    sessionId: "test-session",
+    accountDetail: {},
+    ccarCustomerDetail: {},
+    ccarCardDetail: {},
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.ccDetailDbTableName = "test-table";
+    
+    // Reset mock implementations
+    mockSendFunction.mockReset();
+    
+    // Set up default successful response
+    mockSendFunction.mockImplementation((command) => {
+      if (command instanceof QueryCommand) {
+        return Promise.resolve({ Items: [mockCardDetails] });
+      }
+      return Promise.resolve({});
     });
 
-    describe('fetchCardDetails', () => {
-        it('should fetch card details successfully', async () => {
-            // Mock data
-            const mockCardDetails = {
-                cardNumber: '1234567890123456',
-                cardType: 'VISA',
-                expiryDate: '12/25'
-            };
+    service = new CreditCardDetailSessionDataService(mockCorrelationId);
+  });
 
-            // Setup the mock implementation
-            (getFromTemporaryStorage as jest.Mock).mockResolvedValue(mockCardDetails);
+  afterEach(() => {
+    jest.clearAllMocks();
+    process.env = {};
+  });
 
-            // Execute the test
-            const result = await service.fetchCardDetails();
+  describe("fetchCardDetails", () => {
+    it("should fetch card details successfully", async () => {
+      const mockResponse = {
+        Items: [
+          {
+            ecifId: "test-ecif",
+            transientCreditCardId: "test-session-1",
+            accountIndex: 1,
+            sessionId: "test-session",
+            accountDetail: {},
+            ccarCustomerDetail: {},
+            ccarCardDetail: {},
+          },
+        ],
+      };
 
-            // Assertions
-            expect(result).toEqual(mockCardDetails);
-            expect(getFromTemporaryStorage).toHaveBeenCalledTimes(1);
-            expect(getFromTemporaryStorage).toHaveBeenCalledWith(
-                expect.stringContaining(mockSessionId),
-                mockCorrelationId
-            );
-        });
+      mockSendFunction.mockResolvedValueOnce(mockResponse);
 
-        it('should handle empty response from temporary storage', async () => {
-            // Setup mock to return null
-            (getFromTemporaryStorage as jest.Mock).mockResolvedValue(null);
+      const result = await service.fetchCardDetails("test-ecif", "test-session", 1);
 
-            // Execute and verify the error is thrown
-            await expect(service.fetchCardDetails()).rejects.toThrow(
-                expect.objectContaining({
-                    message: expect.stringMatching(/.*fetch.*card detail.*/i),
-                    code: expect.any(String)
-                })
-            );
-        });
-
-        it('should handle error from temporary storage', async () => {
-            // Setup mock to throw error
-            (getFromTemporaryStorage as jest.Mock).mockRejectedValue(
-                new Error('Storage error')
-            );
-
-            // Execute and verify the error is thrown
-            await expect(service.fetchCardDetails()).rejects.toThrow(
-                expect.objectContaining({
-                    message: expect.stringMatching(/.*fetch.*card detail.*/i),
-                    code: expect.any(String)
-                })
-            );
-        });
-
-        // Add more test cases as needed
+      expect(result).toBeDefined();
+      expect(mockSendFunction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            TableName: "test-table",
+          }),
+        })
+      );
+      expect(result?.ecifId).toBe("test-ecif");
     });
 
-    // Clean up after all tests
-    afterAll(() => {
-        jest.resetModules();
-        jest.clearAllMocks();
+    it("should handle empty response from DynamoDB", async () => {
+      mockSendFunction.mockResolvedValueOnce({ Items: [] });
+
+      const result = await service.fetchCardDetails("test-ecif", "test-session", 1);
+
+      expect(result).toBeUndefined();
     });
+
+    it("should handle DynamoDB errors correctly", async () => {
+      const dbError = new Error("DynamoDB error");
+      mockSendFunction.mockRejectedValueOnce(dbError);
+
+      await expect(
+        service.fetchCardDetails("test-ecif", "test-session", 1)
+      ).rejects.toMatchObject({
+        message: expect.stringMatching(/.*card detail.*/i),
+        code: ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorCode,
+      });
+    });
+  });
+
+  describe("initialization", () => {
+    it("should initialize with empty environment variables", () => {
+      process.env = {};
+      const serviceWithNoEnv = new CreditCardDetailSessionDataService(mockCorrelationId);
+      expect(serviceWithNoEnv).toBeDefined();
+    });
+
+    it("should initialize service successfully", () => {
+      expect(service).toBeDefined();
+    });
+  });
 });
