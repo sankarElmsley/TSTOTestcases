@@ -63,121 +63,141 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { CreditCardArrangementReportService } from '../../../src/service/ccar/creditCardArrangementReportService';
-import { ErrorCodes } from '../../../src/util/errorCodes';
-import { ServerError } from '../../../src/util/serverError';
+import { TransientCreditCardDataHelper } from "../src/service/helper/TransientCreditCardDataHelper";
+import { Account, SessionSummary } from "../model/cdbcontext/sessionDataResponse";
+import { Bin } from "../model/ccu/binRangesResponse";
+import { ClientError } from "../src/service/utils/clientError";
+import { ErrorCodes } from "../src/service/util/errorCodes";
 
-// Mock logging functions
-jest.mock('../../../src/util/logging', () => ({
-    logBackendServiceError: jest.fn(),
-    logBackendServiceRequest: jest.fn(),
-    logBackendServiceResponse: jest.fn(),
-    error: jest.fn(),
-    trace: jest.fn(),
+// Mock logger
+jest.mock("../common/utils/logger", () => ({
     debug: jest.fn(),
-    info: jest.fn()
+    debugWithSanitize: jest.fn(),
+    error: jest.fn(),
+    info: jest.fn(),
+    infoWithSanitize: jest.fn(),
+    trace: jest.fn()
 }));
 
-// Create a proper class mock for CrossAccountAPICache
-class MockCrossAccountAPICache {
-    constructor(
-        crossRegion: string,
-        crossAccountRoleRegion: string,
-        crossAccountRole: string,
-        singleAccountAPIKeyName: string,
-        singleAccountAPIGatewayIDName: string,
-        cacheTimeToLifeMS: number
-    ) {
-        // Validate required parameters
-        if (!crossAccountRoleRegion) {
-            throw new Error('REGION is required');
-        }
-        if (!singleAccountAPIKeyName) {
-            throw new Error('API Key Name is required');
-        }
-        if (!singleAccountAPIGatewayIDName) {
-            throw new Error('Gateway ID Name is required');
-        }
-    }
+describe("TransientCreditCardDataHelper Tests", () => {
+    const correlationId = "test-correlation-id";
 
-    Value() {
-        return Promise.resolve({
-            apiKey: 'mock-api-key',
-            apiGatewayId: 'mock-gateway-id'
+    describe("getCardNumber", () => {
+        const mockCreditCardAccounts: Account[] = [
+            {
+                accountNumber: "4111111111111111",
+                accountCategory: "CREDIT_CARD_ACCOUNTS"
+            },
+            {
+                accountNumber: "5111111111111111",
+                accountCategory: "CREDIT_CARD_ACCOUNTS"
+            }
+        ];
+
+        test("should return correct card number for valid index", () => {
+            const result = TransientCreditCardDataHelper.getCardNumber(mockCreditCardAccounts, 0, correlationId);
+            expect(result).toBe("4111111111111111");
         });
-    }
-}
 
-// Mock the CrossAccountAPICache module
-jest.mock('../../../../common/cross account/cached_api_information', () => ({
-    __esModule: true,
-    default: MockCrossAccountAPICache
-}));
+        test("should throw error for index out of range", () => {
+            expect(() => {
+                TransientCreditCardDataHelper.getCardNumber(mockCreditCardAccounts, 3, correlationId);
+            }).toThrow(ClientError);
+        });
+    });
 
-describe('CreditCardArrangementReportService Tests', () => {
-    let service: CreditCardArrangementReportService;
-    const mockCorrelationId = 'test-correlation-id';
-    const mockCardNumber = '1234567890123456';
-    const mockTsysClientId = 'test-client-id';
-
-    beforeEach(() => {
-        jest.clearAllMocks();
-        
-        // Set ALL required environment variables with non-empty values
-        process.env = {
-            crossRegion: 'us-east-1',
-            REGION: 'us-east-1',  // This is critical
-            crossAccountRoleForCCAR: 'test-role',
-            ssmParamCcarApiKey: 'test-api-key',
-            ssmParamCcarGatewayId: 'test-gateway-id',
-            getCardDetailsUrl: 'http://test-url',
-            getCustomerDetailsUrl: 'http://test-url'
+    describe("filterCreditCardAccounts", () => {
+        const mockSessionData = {
+            "mysummary/getMySummary": {
+                accounts: [
+                    {
+                        accountNumber: "4111111111111111",
+                        accountCategory: "CREDIT_CARD_ACCOUNTS"
+                    },
+                    {
+                        accountNumber: "1234567890",
+                        accountCategory: "CHECKING_ACCOUNTS"
+                    }
+                ]
+            }
         };
 
-        // Mock global fetch
-        global.fetch = jest.fn();
+        test("should filter only credit card accounts from getMySummary", () => {
+            const result = TransientCreditCardDataHelper.filterCreditCardAccounts(mockSessionData, correlationId);
+            expect(result.length).toBe(1);
+            expect(result[0].accountNumber).toBe("4111111111111111");
+        });
+
+        test("should throw error when no session summary available", () => {
+            expect(() => {
+                TransientCreditCardDataHelper.filterCreditCardAccounts({}, correlationId);
+            }).toThrow(ClientError);
+        });
     });
 
-    afterEach(() => {
-        jest.clearAllMocks();
-        process.env = {};
-    });
-
-    describe('Service Initialization', () => {
-        test('should initialize successfully with all required env vars', () => {
-            try {
-                console.log('Environment variables before initialization:', {
-                    REGION: process.env.REGION,
-                    apiKey: process.env.ssmParamCcarApiKey,
-                    gatewayId: process.env.ssmParamCcarGatewayId
-                });
-
-                service = new CreditCardArrangementReportService(mockCorrelationId);
-                expect(service).toBeDefined();
-            } catch (error) {
-                console.error('Service initialization failed:', {
-                    name: error.name,
-                    message: error.message,
-                    stack: error.stack
-                });
-                throw error;
+    describe("getCreditCardLOB", () => {
+        const mockBinRanges: Bin[] = [
+            {
+                lowBIN: "400000",
+                highBIN: "499999",
+                LOB: "R"
+            },
+            {
+                lowBIN: "500000",
+                highBIN: "599999",
+                LOB: "S"
             }
+        ];
+
+        test("should return correct LOB for matching bin range", () => {
+            const result = TransientCreditCardDataHelper.getCreditCardLOB("4111111111111111", mockBinRanges, correlationId);
+            expect(result).toBe("R");
         });
 
-        test('should throw error when REGION is empty', () => {
-            process.env.REGION = '';
-            expect(() => {
-                new CreditCardArrangementReportService(mockCorrelationId);
-            }).toThrow();
-        });
-
-        test('should throw error when REGION is undefined', () => {
-            delete process.env.REGION;
-            expect(() => {
-                new CreditCardArrangementReportService(mockCorrelationId);
-            }).toThrow();
+        test("should return empty string for non-matching bin range", () => {
+            const result = TransientCreditCardDataHelper.getCreditCardLOB("3111111111111111", mockBinRanges, correlationId);
+            expect(result).toBe("");
         });
     });
 
-    // ... rest of the tests remain the same ...
+    describe("checkDateInBetween", () => {
+        test("should return true for date within range", () => {
+            const result = TransientCreditCardDataHelper.checkDateInBetween(
+                "2024-01-15",
+                "2024-01-01",
+                "2024-01-31"
+            );
+            expect(result).toBe(true);
+        });
+
+        test("should return true for date equal to start date", () => {
+            const result = TransientCreditCardDataHelper.checkDateInBetween(
+                "2024-01-01",
+                "2024-01-01",
+                "2024-01-31"
+            );
+            expect(result).toBe(true);
+        });
+
+        test("should return false for date outside range", () => {
+            const result = TransientCreditCardDataHelper.checkDateInBetween(
+                "2024-02-01",
+                "2024-01-01",
+                "2024-01-31"
+            );
+            expect(result).toBe(false);
+        });
+    });
+
+    describe("formatInDate", () => {
+        test("should format date correctly", () => {
+            const result = TransientCreditCardDataHelper.formatInDate("2024-01-21T12:00:00");
+            expect(result).toBe("2024-01-21");
+        });
+
+        test("should return empty string for null input", () => {
+            const result = TransientCreditCardDataHelper.formatInDate(null);
+            expect(result).toBe("");
+        });
+    });
 });
