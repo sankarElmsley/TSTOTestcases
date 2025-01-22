@@ -347,3 +347,23 @@ public class GetLastDownloadDateReqPL {
     public GetLastDownloadDateResPL getLastDownloadDate(@RequestBody GetLastDownloadDateReqPL reqPL) {
         return new GetLastDownloadDateResPL();
     }
+
+
+
+package com.bmo.bos.openapi.accountdetails.reqres.payload;
+
+import com.bmo.bos.openapi.common.ErrorRes;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class GetLastDownloadDateErrorResPL {
+    @JsonProperty(value = "GetLastDownloadDateRs")
+    ErrorRes payload = new ErrorRes();
+
+    public ErrorRes getPayload() {
+        return payload;
+    }
+
+    public void setPayload(ErrorRes payload) {
+        this.payload = payload;
+    }
+}
