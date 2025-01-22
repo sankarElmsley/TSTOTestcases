@@ -251,3 +251,36 @@ public class GetLastDownloadDateErrorResPL {
     }
   }
 }
+
+
+package com.bmo.bos.openapi.accountdetails.reqres;
+
+public class GetLastDownloadDateRes {
+    private GetLastDownloadDateResponseDTO BodyRs;
+
+    public GetLastDownloadDateResponseDTO getBodyRs() {
+        return BodyRs;
+    }
+
+    public void setBodyRs(GetLastDownloadDateResponseDTO bodyRs) {
+        this.BodyRs = bodyRs;
+    }
+}
+
+package com.bmo.bos.openapi.accountdetails.reqres.payload;
+
+import com.bmo.bos.openapi.accountdetails.reqres.GetLastDownloadDateRes;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class GetLastDownloadDateResPL {
+    @JsonProperty(value = "GetLastDownloadDateRs")
+    GetLastDownloadDateRes payload = new GetLastDownloadDateRes();
+
+    public GetLastDownloadDateRes getPayload() {
+        return payload;
+    }
+
+    public void setPayload(GetLastDownloadDateRes payload) {
+        this.payload = payload;
+    }
+}
