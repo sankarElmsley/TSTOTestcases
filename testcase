@@ -63,141 +63,191 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-import { TransientCreditCardDataHelper } from "../src/service/helper/TransientCreditCardDataHelper";
-import { Account, SessionSummary } from "../model/cdbcontext/sessionDataResponse";
-import { Bin } from "../model/ccu/binRangesResponse";
-import { ClientError } from "../src/service/utils/clientError";
-import { ErrorCodes } from "../src/service/util/errorCodes";
+package com.bmo.bos.openapi.account;
 
-// Mock logger
-jest.mock("../common/utils/logger", () => ({
-    debug: jest.fn(),
-    debugWithSanitize: jest.fn(),
-    error: jest.fn(),
-    info: jest.fn(),
-    infoWithSanitize: jest.fn(),
-    trace: jest.fn()
-}));
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-describe("TransientCreditCardDataHelper Tests", () => {
-    const correlationId = "test-correlation-id";
+import com.bmo.bos.openapi.common.SignedOutResPL;
+import com.bmo.bos.openapi.creditscore.reqres.payload.GetLastDownloadDateErrorResPL;
+import com.bmo.bos.openapi.common.controller.BaseController;
 
-    describe("getCardNumber", () => {
-        const mockCreditCardAccounts: Account[] = [
-            {
-                accountNumber: "4111111111111111",
-                accountCategory: "CREDIT_CARD_ACCOUNTS"
-            },
-            {
-                accountNumber: "5111111111111111",
-                accountCategory: "CREDIT_CARD_ACCOUNTS"
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+
+@RestController
+@RequestMapping("/onlinebanking/services/accountdetails")
+public class AccountDownloadController extends BaseController {
+
+    @Operation(
+        description = "Get Last Download Date service",
+        summary = "Get Last Download Date",
+        tags = "getLastDownloadDate",
+        responses = {
+            @ApiResponse(
+                responseCode = "200",
+                description = "Successful Operation",
+                content = @Content(mediaType = "application/json", schema = @Schema(implementation = GetLastDownloadDateResponseDTO.class))
+            ),
+            @ApiResponse(
+                responseCode = "400",
+                description = "Error and Exceptions.",
+                content = @Content(mediaType = "application/json", schema = @Schema(implementation = GetLastDownloadDateErrorResponseDTO.class))
+            ),
+            @ApiResponse(
+                responseCode = "401",
+                description = "Signed Out.",
+                content = @Content(mediaType = "application/json", schema = @Schema(implementation = SignedOutResPL.class))
+            )
+        }
+    )
+    @PostMapping("/lastDownloadDate")
+    public GetLastDownloadDateResponseDTO getLastDownloadDate(@RequestBody GetLastDownloadDateRequestDTO getLastDownloadDateRequestDTO) {
+        return new GetLastDownloadDateResponseDTO();
+    }
+}
+
+
+
+package com.bmo.bos.openapi.creditscore.reqres.payload;
+
+import com.bmo.bos.openapi.common.ErrorRes;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class GetLastDownloadDateErrorResPL {
+    @JsonProperty(value = "GetLastDownloadDateRs")
+    ErrorRes payload = new ErrorRes();
+
+    public ErrorRes getPayload() {
+        return payload;
+    }
+
+    public void setPayload(ErrorRes payload) {
+        this.payload = payload;
+    }
+}
+
+
+
+
+
+
+
+{
+  "paths": {
+    "/onlinebanking/services/accountdetails/lastDownloadDate": {
+      "post": {
+        "tags": ["Account Download Service"],
+        "summary": "Get Last Download Date",
+        "description": "Get the last download date for the specified account",
+        "operationId": "getLastDownloadDate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetLastDownloadDateReqPL"
+              }
             }
-        ];
-
-        test("should return correct card number for valid index", () => {
-            const result = TransientCreditCardDataHelper.getCardNumber(mockCreditCardAccounts, 0, correlationId);
-            expect(result).toBe("4111111111111111");
-        });
-
-        test("should throw error for index out of range", () => {
-            expect(() => {
-                TransientCreditCardDataHelper.getCardNumber(mockCreditCardAccounts, 3, correlationId);
-            }).toThrow(ClientError);
-        });
-    });
-
-    describe("filterCreditCardAccounts", () => {
-        const mockSessionData = {
-            "mysummary/getMySummary": {
-                accounts: [
-                    {
-                        accountNumber: "4111111111111111",
-                        accountCategory: "CREDIT_CARD_ACCOUNTS"
-                    },
-                    {
-                        accountNumber: "1234567890",
-                        accountCategory: "CHECKING_ACCOUNTS"
-                    }
-                ]
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetLastDownloadDateResPL"
+                }
+              }
             }
-        };
-
-        test("should filter only credit card accounts from getMySummary", () => {
-            const result = TransientCreditCardDataHelper.filterCreditCardAccounts(mockSessionData, correlationId);
-            expect(result.length).toBe(1);
-            expect(result[0].accountNumber).toBe("4111111111111111");
-        });
-
-        test("should throw error when no session summary available", () => {
-            expect(() => {
-                TransientCreditCardDataHelper.filterCreditCardAccounts({}, correlationId);
-            }).toThrow(ClientError);
-        });
-    });
-
-    describe("getCreditCardLOB", () => {
-        const mockBinRanges: Bin[] = [
-            {
-                lowBIN: "400000",
-                highBIN: "499999",
-                LOB: "R"
-            },
-            {
-                lowBIN: "500000",
-                highBIN: "599999",
-                LOB: "S"
+          },
+          "400": {
+            "description": "Error and Exceptions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetLastDownloadDateErrorResPL"
+                }
+              }
             }
-        ];
-
-        test("should return correct LOB for matching bin range", () => {
-            const result = TransientCreditCardDataHelper.getCreditCardLOB("4111111111111111", mockBinRanges, correlationId);
-            expect(result).toBe("R");
-        });
-
-        test("should return empty string for non-matching bin range", () => {
-            const result = TransientCreditCardDataHelper.getCreditCardLOB("3111111111111111", mockBinRanges, correlationId);
-            expect(result).toBe("");
-        });
-    });
-
-    describe("checkDateInBetween", () => {
-        test("should return true for date within range", () => {
-            const result = TransientCreditCardDataHelper.checkDateInBetween(
-                "2024-01-15",
-                "2024-01-01",
-                "2024-01-31"
-            );
-            expect(result).toBe(true);
-        });
-
-        test("should return true for date equal to start date", () => {
-            const result = TransientCreditCardDataHelper.checkDateInBetween(
-                "2024-01-01",
-                "2024-01-01",
-                "2024-01-31"
-            );
-            expect(result).toBe(true);
-        });
-
-        test("should return false for date outside range", () => {
-            const result = TransientCreditCardDataHelper.checkDateInBetween(
-                "2024-02-01",
-                "2024-01-01",
-                "2024-01-31"
-            );
-            expect(result).toBe(false);
-        });
-    });
-
-    describe("formatInDate", () => {
-        test("should format date correctly", () => {
-            const result = TransientCreditCardDataHelper.formatInDate("2024-01-21T12:00:00");
-            expect(result).toBe("2024-01-21");
-        });
-
-        test("should return empty string for null input", () => {
-            const result = TransientCreditCardDataHelper.formatInDate(null);
-            expect(result).toBe("");
-        });
-    });
-});
+          },
+          "401": {
+            "description": "Signed Out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedOutResPL"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "GetLastDownloadDateReq": {
+        "type": "object",
+        "properties": {
+          "HdrRq": {
+            "$ref": "#/components/schemas/RequestHeader"
+          },
+          "BodyRq": {
+            "$ref": "#/components/schemas/GetLastDownloadDateRequestDTO"
+          }
+        }
+      },
+      "GetLastDownloadDateReqPL": {
+        "type": "object",
+        "properties": {
+          "GetLastDownloadDateRq": {
+            "$ref": "#/components/schemas/GetLastDownloadDateReq"
+          }
+        }
+      },
+      "GetLastDownloadDateRes": {
+        "type": "object",
+        "properties": {
+          "HdrRs": {
+            "$ref": "#/components/schemas/ResponseHeader"
+          },
+          "BodyRs": {
+            "$ref": "#/components/schemas/GetLastDownloadDateResponseDTO"
+          }
+        }
+      },
+      "GetLastDownloadDateResPL": {
+        "type": "object",
+        "properties": {
+          "GetLastDownloadDateRs": {
+            "$ref": "#/components/schemas/GetLastDownloadDateRes"
+          }
+        }
+      },
+      "GetLastDownloadDateRequestDTO": {
+        "type": "object",
+        "properties": {
+          "accountIndex": {
+            "type": "string",
+            "description": "Account index"
+          }
+        }
+      },
+      "GetLastDownloadDateResponseDTO": {
+        "type": "object",
+        "properties": {
+          "lastDownloadDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last download date for the account"
+          }
+        }
+      }
+    }
+  }
+}
