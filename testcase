@@ -318,3 +318,32 @@ public class GetLastDownloadDateReqPL {
         this.payload = payload;
     }
 }
+
+
+
+    @Operation(
+        description = "Get Last Download Date service",
+        summary = "Get Last Download Date",
+        tags = "getLastDownloadDate",
+        responses = {
+            @ApiResponse(
+                responseCode = "200",
+                description = "Successful Operation",
+                content = @Content(mediaType = "application/json", schema = @Schema(implementation = GetLastDownloadDateResPL.class))
+            ),
+            @ApiResponse(
+                responseCode = "400",
+                description = "Error and Exceptions.",
+                content = @Content(mediaType = "application/json", schema = @Schema(implementation = GetLastDownloadDateErrorResPL.class))
+            ),
+            @ApiResponse(
+                responseCode = "401",
+                description = "Signed Out.",
+                content = @Content(mediaType = "application/json", schema = @Schema(implementation = SignedOutResPL.class))
+            )
+        }
+    )
+    @PostMapping("/lastDownloadDate")
+    public GetLastDownloadDateResPL getLastDownloadDate(@RequestBody GetLastDownloadDateReqPL reqPL) {
+        return new GetLastDownloadDateResPL();
+    }
