@@ -77,6 +77,24 @@ import { Authorization } from "../../model/ccaa/getPendingTransactionsResponse";
 import { PostedTransactionsResponse } from "../../model/ccaev/getPostedTransactionsResponse";
 import { ApiConstants } from "../../util/constants";
 
+// Define the Transaction type
+type Transaction = {
+  accountId: string;
+  debitCreditMemo: string;
+  description?: string;
+  transactionId: string;
+  transactionDate: string;
+  transactionAmount: number;
+  transactionCategory: string;
+  cardNumberOrig: string;
+  eligibleForInstallments?: string;
+  merchantCategoryCode?: string;
+  merchantName: string;
+  postedDate: string;
+  transactionCode?: string;
+  transRefNum?: string;
+};
+
 describe("TransactionMapper Tests", () => {
   const mockCorrelationId = "test-correlation-id";
 
@@ -91,24 +109,34 @@ describe("TransactionMapper Tests", () => {
         moreRecords: false,
         transactions: [
           {
-            transactionAmount: 100.50,
-            cardNumberOrig: "1234567890",
+            accountId: "ACC123",
+            debitCreditMemo: "DEBIT",
             description: "Test Transaction 1",
-            transactionCode: "123",
+            transactionId: "TXN001",
+            transactionDate: "2025-01-01",
+            transactionAmount: 100.50,
+            transactionCategory: "PURCHASE",
+            cardNumberOrig: "1234567890",
+            eligibleForInstallments: "Y",
+            merchantCategoryCode: "5411",
             merchantName: "Test Merchant 1",
             postedDate: "2025-01-01",
-            transactionDate: "2025-01-01",
-            eligibleForInstallments: "Y"
+            transactionCode: "123",
+            transRefNum: "REF001"
           },
           {
-            transactionAmount: 200.75,
-            cardNumberOrig: "0987654321",
+            accountId: "ACC124",
+            debitCreditMemo: "CREDIT",
             description: "Test Transaction 2",
-            transactionCode: "456",
+            transactionId: "TXN002",
+            transactionDate: "2025-01-02",
+            transactionAmount: 200.75,
+            transactionCategory: "REFUND",
+            cardNumberOrig: "0987654321",
             merchantName: "Test Merchant 2",
             postedDate: "2025-01-02",
-            transactionDate: "2025-01-02",
-            eligibleForInstallments: ""
+            transactionCode: "456",
+            transRefNum: "REF002"
           }
         ]
       }
@@ -126,6 +154,20 @@ describe("TransactionMapper Tests", () => {
       expect(result.availableRecords).toBe(2);
       expect(result.moreRecords).toBe(false);
       expect(result.recordsReturned).toBe(2);
+      
+      // Verify first transaction mapping
+      expect(result.transactions[0]).toEqual(expect.objectContaining({
+        amount: 100.50,
+        cardNumber: "1234567890",
+        descr: "Test Transaction 1",
+        eligibleForDispute: true,
+        eligibleForInstallments: "Y",
+        merchantName: "Test Merchant 1",
+        postDate: "2025-01-01",
+        promoOfferAvailable: true,
+        txnCode: "123",
+        txnDate: "2025-01-01"
+      }));
     });
 
     test("should handle empty transactions array", () => {
@@ -157,7 +199,10 @@ describe("TransactionMapper Tests", () => {
           amount: { value: 150.25 },
           authorizationDate: "2025-01-03",
           type: "PURCHASE",
-          transactionReferenceNumber: "REF123"
+          transactionReferenceNumber: "REF123",
+          authorizationStatus: "APPROVED",
+          preAuthorization: "VALID",
+          response: "APPROVED"
         },
         authorizationTransactionInfo: {
           originalCardNumber: "1234567890",
@@ -173,9 +218,19 @@ describe("TransactionMapper Tests", () => {
       );
 
       expect(result.transactions).toHaveLength(1);
-      expect(result.transactions[0].amount).toBe(150.25);
-      expect(result.transactions[0].cardNumber).toBe("1234567890");
-      expect(result.transactions[0].merchantName).toBe("Test Pending Merchant 1");
+      expect(result.transactions[0]).toEqual(expect.objectContaining({
+        amount: 150.25,
+        cardNumber: "1234567890",
+        descr: "Test Pending Merchant 1",
+        eligibleForDispute: false,
+        eligibleForInstallments: "N",
+        merchantName: "Test Pending Merchant 1",
+        postDate: "",
+        txnCode: "",
+        txnDate: "2025-01-03",
+        txnIndicator: "PURCHASE",
+        txnRefNumber: "REF123"
+      }));
     });
 
     test("should handle empty pending transactions array", () => {
@@ -197,22 +252,26 @@ describe("TransactionMapper Tests", () => {
           type: "PURCHASE",
           response: "APPROVED",
           amount: { value: 100 },
-          authorizationDate: "2025-01-01"
+          authorizationDate: "2025-01-01",
+          transactionReferenceNumber: "REF123"
         },
         authorizationTransactionInfo: {
+          originalCardNumber: "1234567890",
           merchantName: "Valid Merchant"
         }
       },
       {
         authorizationInfo: {
-          authorizationStatus: "DECLINED",  // Should be filtered out
+          authorizationStatus: "DECLINED",
           preAuthorization: "VALID",
           type: "PURCHASE",
           response: "APPROVED",
           amount: { value: 200 },
-          authorizationDate: "2025-01-01"
+          authorizationDate: "2025-01-01",
+          transactionReferenceNumber: "REF124"
         },
         authorizationTransactionInfo: {
+          originalCardNumber: "0987654321",
           merchantName: "Invalid Merchant"
         }
       }
@@ -237,21 +296,31 @@ describe("TransactionMapper Tests", () => {
     const mockTransactions: Authorization[] = [
       {
         authorizationInfo: {
-          authorizationDate: "2025-01-15",
+          authorizationStatus: "APPROVED",
+          preAuthorization: "VALID",
+          type: "PURCHASE",
+          response: "APPROVED",
           amount: { value: 100 },
-          type: "PURCHASE"
+          authorizationDate: "2025-01-15",
+          transactionReferenceNumber: "REF125"
         },
         authorizationTransactionInfo: {
+          originalCardNumber: "1234567890",
           merchantName: "In Range Merchant"
         }
       },
       {
         authorizationInfo: {
-          authorizationDate: "2025-02-15",  // Outside range
+          authorizationStatus: "APPROVED",
+          preAuthorization: "VALID",
+          type: "PURCHASE",
+          response: "APPROVED",
           amount: { value: 200 },
-          type: "PURCHASE"
+          authorizationDate: "2025-02-15",
+          transactionReferenceNumber: "REF126"
         },
         authorizationTransactionInfo: {
+          originalCardNumber: "0987654321",
           merchantName: "Out of Range Merchant"
         }
       }
