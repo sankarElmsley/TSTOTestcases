@@ -63,307 +63,221 @@ import { Bin } from "///src/model/ccu/binRangesResponse";
 import { CreditcardUtilityService } from "///src/service/ccu/creditcardUtilityService";
 import fetch from 'node-fetch';
 
-package com.bmo.bos.openapi.account;
 
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+// Mock logger
+jest.mock("../common/utils/logger", () => ({
+  debug: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  trace: jest.fn()
+}));
 
-import com.bmo.bos.openapi.common.SignedOutResPL;
-import com.bmo.bos.openapi.creditscore.reqres.payload.GetLastDownloadDateErrorResPL;
-import com.bmo.bos.openapi.common.controller.BaseController;
+import { TransactionMapper } from "./TransactionMapper";
+import { Authorization } from "../../model/ccaa/getPendingTransactionsResponse";
+import { PostedTransactionsResponse } from "../../model/ccaev/getPostedTransactionsResponse";
+import { ApiConstants } from "../../util/constants";
 
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
+describe("TransactionMapper Tests", () => {
+  const mockCorrelationId = "test-correlation-id";
 
-@RestController
-@RequestMapping("/onlinebanking/services/accountdetails")
-public class AccountDownloadController extends BaseController {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
 
-    @Operation(
-        description = "Get Last Download Date service",
-        summary = "Get Last Download Date",
-        tags = "getLastDownloadDate",
-        responses = {
-            @ApiResponse(
-                responseCode = "200",
-                description = "Successful Operation",
-                content = @Content(mediaType = "application/json", schema = @Schema(implementation = GetLastDownloadDateResponseDTO.class))
-            ),
-            @ApiResponse(
-                responseCode = "400",
-                description = "Error and Exceptions.",
-                content = @Content(mediaType = "application/json", schema = @Schema(implementation = GetLastDownloadDateErrorResponseDTO.class))
-            ),
-            @ApiResponse(
-                responseCode = "401",
-                description = "Signed Out.",
-                content = @Content(mediaType = "application/json", schema = @Schema(implementation = SignedOutResPL.class))
-            )
-        }
-    )
-    @PostMapping("/lastDownloadDate")
-    public GetLastDownloadDateResponseDTO getLastDownloadDate(@RequestBody GetLastDownloadDateRequestDTO getLastDownloadDateRequestDTO) {
-        return new GetLastDownloadDateResponseDTO();
-    }
-}
-
-
-
-package com.bmo.bos.openapi.creditscore.reqres.payload;
-
-import com.bmo.bos.openapi.common.ErrorRes;
-import com.fasterxml.jackson.annotation.JsonProperty;
-
-public class GetLastDownloadDateErrorResPL {
-    @JsonProperty(value = "GetLastDownloadDateRs")
-    ErrorRes payload = new ErrorRes();
-
-    public ErrorRes getPayload() {
-        return payload;
-    }
-
-    public void setPayload(ErrorRes payload) {
-        this.payload = payload;
-    }
-}
-
-
-
-
-
-
-
-{
-  "paths": {
-    "/onlinebanking/services/accountdetails/lastDownloadDate": {
-      "post": {
-        "tags": ["Account Download Service"],
-        "summary": "Get Last Download Date",
-        "description": "Get the last download date for the specified account",
-        "operationId": "getLastDownloadDate",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GetLastDownloadDateReqPL"
-              }
-            }
+  describe("mapRetailPostedTransactions", () => {
+    const mockPostedTransactionsResponse: PostedTransactionsResponse = {
+      transactionDetail: {
+        recordTotal: 2,
+        moreRecords: false,
+        transactions: [
+          {
+            transactionAmount: 100.50,
+            cardNumberOrig: "1234567890",
+            description: "Test Transaction 1",
+            transactionCode: "123",
+            merchantName: "Test Merchant 1",
+            postedDate: "2025-01-01",
+            transactionDate: "2025-01-01",
+            eligibleForInstallments: "Y"
+          },
+          {
+            transactionAmount: 200.75,
+            cardNumberOrig: "0987654321",
+            description: "Test Transaction 2",
+            transactionCode: "456",
+            merchantName: "Test Merchant 2",
+            postedDate: "2025-01-02",
+            transactionDate: "2025-01-02",
+            eligibleForInstallments: ""
           }
+        ]
+      }
+    };
+
+    test("should map posted transactions correctly", () => {
+      const result = TransactionMapper.mapRetailPostedTransactions(
+        mockPostedTransactionsResponse,
+        true,
+        "1234567890",
+        mockCorrelationId
+      );
+
+      expect(result.transactions).toHaveLength(2);
+      expect(result.availableRecords).toBe(2);
+      expect(result.moreRecords).toBe(false);
+      expect(result.recordsReturned).toBe(2);
+    });
+
+    test("should handle empty transactions array", () => {
+      const emptyResponse: PostedTransactionsResponse = {
+        transactionDetail: {
+          recordTotal: 0,
+          moreRecords: false,
+          transactions: []
+        }
+      };
+
+      const result = TransactionMapper.mapRetailPostedTransactions(
+        emptyResponse,
+        true,
+        "1234567890",
+        mockCorrelationId
+      );
+
+      expect(result.transactions).toHaveLength(0);
+      expect(result.availableRecords).toBe(0);
+      expect(result.recordsReturned).toBe(0);
+    });
+  });
+
+  describe("mapRetailPendingTransactions", () => {
+    const mockPendingTransactions: Authorization[] = [
+      {
+        authorizationInfo: {
+          amount: { value: 150.25 },
+          authorizationDate: "2025-01-03",
+          type: "PURCHASE",
+          transactionReferenceNumber: "REF123"
         },
-        "responses": {
-          "200": {
-            "description": "Successful Operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetLastDownloadDateResPL"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Error and Exceptions.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GetLastDownloadDateErrorResPL"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Signed Out.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SignedOutResPL"
-                }
-              }
-            }
-          }
+        authorizationTransactionInfo: {
+          originalCardNumber: "1234567890",
+          merchantName: "Test Pending Merchant 1"
         }
       }
-    }
-  },
-  "components": {
-    "schemas": {
-      "GetLastDownloadDateReq": {
-        "type": "object",
-        "properties": {
-          "HdrRq": {
-            "$ref": "#/components/schemas/RequestHeader"
-          },
-          "BodyRq": {
-            "$ref": "#/components/schemas/GetLastDownloadDateRequestDTO"
-          }
+    ];
+
+    test("should map pending transactions correctly", () => {
+      const result = TransactionMapper.mapRetailPendingTransactions(
+        mockPendingTransactions,
+        mockCorrelationId
+      );
+
+      expect(result.transactions).toHaveLength(1);
+      expect(result.transactions[0].amount).toBe(150.25);
+      expect(result.transactions[0].cardNumber).toBe("1234567890");
+      expect(result.transactions[0].merchantName).toBe("Test Pending Merchant 1");
+    });
+
+    test("should handle empty pending transactions array", () => {
+      const result = TransactionMapper.mapRetailPendingTransactions(
+        [],
+        mockCorrelationId
+      );
+
+      expect(result.transactions).toHaveLength(0);
+    });
+  });
+
+  describe("filterEligibleCCPendingTransactions", () => {
+    const mockAuthorizationList: Authorization[] = [
+      {
+        authorizationInfo: {
+          authorizationStatus: "APPROVED",
+          preAuthorization: "VALID",
+          type: "PURCHASE",
+          response: "APPROVED",
+          amount: { value: 100 },
+          authorizationDate: "2025-01-01"
+        },
+        authorizationTransactionInfo: {
+          merchantName: "Valid Merchant"
         }
       },
-      "GetLastDownloadDateReqPL": {
-        "type": "object",
-        "properties": {
-          "GetLastDownloadDateRq": {
-            "$ref": "#/components/schemas/GetLastDownloadDateReq"
-          }
-        }
-      },
-      "GetLastDownloadDateRes": {
-        "type": "object",
-        "properties": {
-          "HdrRs": {
-            "$ref": "#/components/schemas/ResponseHeader"
-          },
-          "BodyRs": {
-            "$ref": "#/components/schemas/GetLastDownloadDateResponseDTO"
-          }
-        }
-      },
-      "GetLastDownloadDateResPL": {
-        "type": "object",
-        "properties": {
-          "GetLastDownloadDateRs": {
-            "$ref": "#/components/schemas/GetLastDownloadDateRes"
-          }
-        }
-      },
-      "GetLastDownloadDateRequestDTO": {
-        "type": "object",
-        "properties": {
-          "accountIndex": {
-            "type": "string",
-            "description": "Account index"
-          }
-        }
-      },
-      "GetLastDownloadDateResponseDTO": {
-        "type": "object",
-        "properties": {
-          "lastDownloadDate": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Last download date for the account"
-          }
+      {
+        authorizationInfo: {
+          authorizationStatus: "DECLINED",  // Should be filtered out
+          preAuthorization: "VALID",
+          type: "PURCHASE",
+          response: "APPROVED",
+          amount: { value: 200 },
+          authorizationDate: "2025-01-01"
+        },
+        authorizationTransactionInfo: {
+          merchantName: "Invalid Merchant"
         }
       }
-    }
-  }
-}
+    ];
 
+    test("should filter transactions based on authorization status", () => {
+      ApiConstants.PENDING_CC_TXN_AUTH_STATUS_IGNORE = ["DECLINED"];
+      ApiConstants.PENDING_CC_TXN_AUTH_TYPES_IGNORE = ["INVALID"];
+      ApiConstants.PENDING_CC_TXN_AUTH_RESP_TYPES_IGNORE = ["DECLINED"];
 
-package com.bmo.bos.openapi.accountdetails.reqres;
+      const result = TransactionMapper.filterEligibleCCPendingTransactions(
+        mockAuthorizationList,
+        mockCorrelationId
+      );
 
-public class GetLastDownloadDateRes {
-    private GetLastDownloadDateResponseDTO BodyRs;
+      expect(result).toHaveLength(1);
+      expect(result[0].authorizationTransactionInfo.merchantName).toBe("Valid Merchant");
+    });
+  });
 
-    public GetLastDownloadDateResponseDTO getBodyRs() {
-        return BodyRs;
-    }
-
-    public void setBodyRs(GetLastDownloadDateResponseDTO bodyRs) {
-        this.BodyRs = bodyRs;
-    }
-}
-
-package com.bmo.bos.openapi.accountdetails.reqres.payload;
-
-import com.bmo.bos.openapi.accountdetails.reqres.GetLastDownloadDateRes;
-import com.fasterxml.jackson.annotation.JsonProperty;
-
-public class GetLastDownloadDateResPL {
-    @JsonProperty(value = "GetLastDownloadDateRs")
-    GetLastDownloadDateRes payload = new GetLastDownloadDateRes();
-
-    public GetLastDownloadDateRes getPayload() {
-        return payload;
-    }
-
-    public void setPayload(GetLastDownloadDateRes payload) {
-        this.payload = payload;
-    }
-}
-
-
-
-package com.bmo.bos.openapi.accountdetails.reqres;
-
-public class GetLastDownloadDateReq {
-    private GetLastDownloadDateRequestDTO BodyRq;
-
-    public GetLastDownloadDateRequestDTO getBodyRq() {
-        return BodyRq;
-    }
-
-    public void setBodyRq(GetLastDownloadDateRequestDTO bodyRq) {
-        this.BodyRq = bodyRq;
-    }
-}
-
-package com.bmo.bos.openapi.accountdetails.reqres.payload;
-
-import com.bmo.bos.openapi.accountdetails.reqres.GetLastDownloadDateReq;
-import com.fasterxml.jackson.annotation.JsonProperty;
-
-public class GetLastDownloadDateReqPL {
-    @JsonProperty(value = "GetLastDownloadDateRq")
-    GetLastDownloadDateReq payload = new GetLastDownloadDateReq();
-
-    public GetLastDownloadDateReq getPayload() {
-        return payload;
-    }
-
-    public void setPayload(GetLastDownloadDateReq payload) {
-        this.payload = payload;
-    }
-}
-
-
-
-    @Operation(
-        description = "Get Last Download Date service",
-        summary = "Get Last Download Date",
-        tags = "getLastDownloadDate",
-        responses = {
-            @ApiResponse(
-                responseCode = "200",
-                description = "Successful Operation",
-                content = @Content(mediaType = "application/json", schema = @Schema(implementation = GetLastDownloadDateResPL.class))
-            ),
-            @ApiResponse(
-                responseCode = "400",
-                description = "Error and Exceptions.",
-                content = @Content(mediaType = "application/json", schema = @Schema(implementation = GetLastDownloadDateErrorResPL.class))
-            ),
-            @ApiResponse(
-                responseCode = "401",
-                description = "Signed Out.",
-                content = @Content(mediaType = "application/json", schema = @Schema(implementation = SignedOutResPL.class))
-            )
+  describe("filterCCPendingTransactionsWithinDateRange", () => {
+    const mockTransactions: Authorization[] = [
+      {
+        authorizationInfo: {
+          authorizationDate: "2025-01-15",
+          amount: { value: 100 },
+          type: "PURCHASE"
+        },
+        authorizationTransactionInfo: {
+          merchantName: "In Range Merchant"
         }
-    )
-    @PostMapping("/lastDownloadDate")
-    public GetLastDownloadDateResPL getLastDownloadDate(@RequestBody GetLastDownloadDateReqPL reqPL) {
-        return new GetLastDownloadDateResPL();
-    }
+      },
+      {
+        authorizationInfo: {
+          authorizationDate: "2025-02-15",  // Outside range
+          amount: { value: 200 },
+          type: "PURCHASE"
+        },
+        authorizationTransactionInfo: {
+          merchantName: "Out of Range Merchant"
+        }
+      }
+    ];
 
+    test("should filter transactions within date range", () => {
+      const result = TransactionMapper.filterCCPendingTransactionsWithinDateRange(
+        mockTransactions,
+        "2025-01-01",
+        "2025-01-31",
+        mockCorrelationId
+      );
 
+      expect(result).toHaveLength(1);
+      expect(result[0].authorizationTransactionInfo.merchantName).toBe("In Range Merchant");
+    });
 
-package com.bmo.bos.openapi.accountdetails.reqres.payload;
+    test("should handle empty transaction list", () => {
+      const result = TransactionMapper.filterCCPendingTransactionsWithinDateRange(
+        [],
+        "2025-01-01",
+        "2025-01-31",
+        mockCorrelationId
+      );
 
-import com.bmo.bos.openapi.common.ErrorRes;
-import com.fasterxml.jackson.annotation.JsonProperty;
-
-public class GetLastDownloadDateErrorResPL {
-    @JsonProperty(value = "GetLastDownloadDateRs")
-    ErrorRes payload = new ErrorRes();
-
-    public ErrorRes getPayload() {
-        return payload;
-    }
-
-    public void setPayload(ErrorRes payload) {
-        this.payload = payload;
-    }
-}
+      expect(result).toHaveLength(0);
+    });
+  });
+});
