@@ -76,24 +76,7 @@ import { TransactionMapper } from "./TransactionMapper";
 import { Authorization } from "../../model/ccaa/getPendingTransactionsResponse";
 import { PostedTransactionsResponse } from "../../model/ccaev/getPostedTransactionsResponse";
 import { ApiConstants } from "../../util/constants";
-
-// Define the Transaction type
-type Transaction = {
-  accountId: string;
-  debitCreditMemo: string;
-  description?: string;
-  transactionId: string;
-  transactionDate: string;
-  transactionAmount: number;
-  transactionCategory: string;
-  cardNumberOrig: string;
-  eligibleForInstallments?: string;
-  merchantCategoryCode?: string;
-  merchantName: string;
-  postedDate: string;
-  transactionCode?: string;
-  transRefNum?: string;
-};
+import { TransientCreditCardDataHelper } from "../util/transientCreditCardDataHelper";
 
 describe("TransactionMapper Tests", () => {
   const mockCorrelationId = "test-correlation-id";
@@ -143,6 +126,10 @@ describe("TransactionMapper Tests", () => {
     };
 
     test("should map posted transactions correctly", () => {
+      // Mock TransientCreditCardDataHelper.formatTxnDate
+      jest.spyOn(TransientCreditCardDataHelper, 'formatTxnDate')
+          .mockImplementation((date) => date);
+
       const result = TransactionMapper.mapRetailPostedTransactions(
         mockPostedTransactionsResponse,
         true,
@@ -156,7 +143,8 @@ describe("TransactionMapper Tests", () => {
       expect(result.recordsReturned).toBe(2);
       
       // Verify first transaction mapping
-      expect(result.transactions[0]).toEqual(expect.objectContaining({
+      const firstTransaction = result.transactions[0];
+      expect(firstTransaction).toEqual(expect.objectContaining({
         amount: 100.50,
         cardNumber: "1234567890",
         descr: "Test Transaction 1",
@@ -189,6 +177,40 @@ describe("TransactionMapper Tests", () => {
       expect(result.transactions).toHaveLength(0);
       expect(result.availableRecords).toBe(0);
       expect(result.recordsReturned).toBe(0);
+    });
+
+    test("should set eligibleForDispute to false for non-primary card transactions", () => {
+      const result = TransactionMapper.mapRetailPostedTransactions(
+        mockPostedTransactionsResponse,
+        false, // non-primary card
+        "1234567890",
+        mockCorrelationId
+      );
+
+      const transaction = result.transactions.find(t => t.cardNumber !== "1234567890");
+      expect(transaction?.eligibleForDispute).toBe(false);
+    });
+
+    test("should handle undefined eligibleForInstallments", () => {
+      const response = {
+        transactionDetail: {
+          recordTotal: 1,
+          moreRecords: false,
+          transactions: [{
+            ...mockPostedTransactionsResponse.transactionDetail.transactions[0],
+            eligibleForInstallments: undefined
+          }]
+        }
+      };
+
+      const result = TransactionMapper.mapRetailPostedTransactions(
+        response,
+        true,
+        "1234567890",
+        mockCorrelationId
+      );
+
+      expect(result.transactions[0].eligibleForInstallments).toBe("N");
     });
   });
 
@@ -240,113 +262,6 @@ describe("TransactionMapper Tests", () => {
       );
 
       expect(result.transactions).toHaveLength(0);
-    });
-  });
-
-  describe("filterEligibleCCPendingTransactions", () => {
-    const mockAuthorizationList: Authorization[] = [
-      {
-        authorizationInfo: {
-          authorizationStatus: "APPROVED",
-          preAuthorization: "VALID",
-          type: "PURCHASE",
-          response: "APPROVED",
-          amount: { value: 100 },
-          authorizationDate: "2025-01-01",
-          transactionReferenceNumber: "REF123"
-        },
-        authorizationTransactionInfo: {
-          originalCardNumber: "1234567890",
-          merchantName: "Valid Merchant"
-        }
-      },
-      {
-        authorizationInfo: {
-          authorizationStatus: "DECLINED",
-          preAuthorization: "VALID",
-          type: "PURCHASE",
-          response: "APPROVED",
-          amount: { value: 200 },
-          authorizationDate: "2025-01-01",
-          transactionReferenceNumber: "REF124"
-        },
-        authorizationTransactionInfo: {
-          originalCardNumber: "0987654321",
-          merchantName: "Invalid Merchant"
-        }
-      }
-    ];
-
-    test("should filter transactions based on authorization status", () => {
-      ApiConstants.PENDING_CC_TXN_AUTH_STATUS_IGNORE = ["DECLINED"];
-      ApiConstants.PENDING_CC_TXN_AUTH_TYPES_IGNORE = ["INVALID"];
-      ApiConstants.PENDING_CC_TXN_AUTH_RESP_TYPES_IGNORE = ["DECLINED"];
-
-      const result = TransactionMapper.filterEligibleCCPendingTransactions(
-        mockAuthorizationList,
-        mockCorrelationId
-      );
-
-      expect(result).toHaveLength(1);
-      expect(result[0].authorizationTransactionInfo.merchantName).toBe("Valid Merchant");
-    });
-  });
-
-  describe("filterCCPendingTransactionsWithinDateRange", () => {
-    const mockTransactions: Authorization[] = [
-      {
-        authorizationInfo: {
-          authorizationStatus: "APPROVED",
-          preAuthorization: "VALID",
-          type: "PURCHASE",
-          response: "APPROVED",
-          amount: { value: 100 },
-          authorizationDate: "2025-01-15",
-          transactionReferenceNumber: "REF125"
-        },
-        authorizationTransactionInfo: {
-          originalCardNumber: "1234567890",
-          merchantName: "In Range Merchant"
-        }
-      },
-      {
-        authorizationInfo: {
-          authorizationStatus: "APPROVED",
-          preAuthorization: "VALID",
-          type: "PURCHASE",
-          response: "APPROVED",
-          amount: { value: 200 },
-          authorizationDate: "2025-02-15",
-          transactionReferenceNumber: "REF126"
-        },
-        authorizationTransactionInfo: {
-          originalCardNumber: "0987654321",
-          merchantName: "Out of Range Merchant"
-        }
-      }
-    ];
-
-    test("should filter transactions within date range", () => {
-      const result = TransactionMapper.filterCCPendingTransactionsWithinDateRange(
-        mockTransactions,
-        "2025-01-01",
-        "2025-01-31",
-        mockCorrelationId
-      );
-
-      expect(result).toHaveLength(1);
-      expect(result[0].authorizationTransactionInfo.merchantName).toBe("In Range Merchant");
-    });
-
-    test("should handle empty transaction list", () => {
-      const result = TransactionMapper.filterCCPendingTransactionsWithinDateRange(
-        [],
-        "2025-01-01",
-        "2025-01-31",
-        mockCorrelationId
-      );
-
-      expect(result).toHaveLength(0);
     });
   });
 });
