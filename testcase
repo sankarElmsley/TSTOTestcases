@@ -72,161 +72,171 @@ import moment from 'moment';
 // Mock logger
 jest.mock("../common/utils/logger", () => ({
   debug: jest.fn(),
-  debugWithSanitize: jest.fn(),
   error: jest.fn(),
   info: jest.fn(),
   trace: jest.fn()
 }));
 
-describe('TransientCreditCardDataHelper Tests', () => {
-  const mockCorrelationId = 'test-correlation-id';
+import { TransactionMapper } from "./TransactionMapper";
+import { Authorization } from "../../model/ccaa/getPendingTransactionsResponse";
+import { PostedTransactionsResponse } from "../../model/ccaev/getPostedTransactionsResponse";
+import { ApiConstants } from "../../util/constants";
+
+describe("TransactionMapper Tests", () => {
+  const mockCorrelationId = "test-correlation-id";
 
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  describe('getCardNumber', () => {
-    const mockCreditCardAccounts: Account[] = [
+  describe("mapRetailPendingTransactions", () => {
+    const mockPendingTransactions: Authorization[] = [
       {
-        accountNumber: '1234567890',
-        accountCategory: 'CREDIT_CARD_ACCOUNTS'
-      },
-      {
-        accountNumber: '0987654321',
-        accountCategory: 'CREDIT_CARD_ACCOUNTS'
+        authorizationInfo: {
+          amount: { value: 150.25 },
+          authorizationDate: "2025-01-03",
+          type: "PURCHASE",
+          transactionReferenceNumber: "REF123",
+          authorizationStatus: "APPROVED",
+          preAuthorization: "VALID",
+          response: "APPROVED"
+        },
+        authorizationTransactionInfo: {
+          originalCardNumber: "1234567890",
+          merchantName: "Test Pending Merchant 1"
+        }
       }
     ];
 
-    test('should return correct card number for valid account index', () => {
-      const result = TransientCreditCardDataHelper.getCardNumber(
-        mockCreditCardAccounts,
-        0,
+    test("should map pending transactions correctly", () => {
+      const result = TransactionMapper.mapRetailPendingTransactions(
+        mockPendingTransactions,
         mockCorrelationId
       );
-      expect(result).toBe('1234567890');
+
+      expect(result.transactions).toHaveLength(1);
+      const transaction = result.transactions[0];
+      expect(transaction.amount).toBe(150.25);
+      expect(transaction.cardNumber).toBe("1234567890");
+      expect(transaction.descr).toBe("Test Pending Merchant 1");
+      expect(transaction.merchantName).toBe("Test Pending Merchant 1");
+      expect(transaction.txnDate).toBe("2025-01-03");
+      expect(transaction.txnIndicator).toBe("PURCHASE");
+      expect(transaction.txnRefNumber).toBe("REF123");
+      expect(transaction.eligibleForDispute).toBe(false);
+      expect(transaction.eligibleForInstallments).toBe("N");
+      expect(transaction.postDate).toBe("");
+      expect(transaction.txnCode).toBe("");
     });
 
-    test('should throw error when account index is out of range', () => {
-      expect(() => {
-        TransientCreditCardDataHelper.getCardNumber(
-          mockCreditCardAccounts,
-          3,
-          mockCorrelationId
-        );
-      }).toThrow(ClientError);
+    test("should handle empty pending transactions array", () => {
+      const result = TransactionMapper.mapRetailPendingTransactions(
+        [],
+        mockCorrelationId
+      );
+
+      expect(result.transactions).toHaveLength(0);
+    });
+
+    test("should handle missing optional fields", () => {
+      const minimalPendingTransaction: Authorization[] = [
+        {
+          authorizationInfo: {
+            amount: { value: 150.25 },
+            authorizationDate: "2025-01-03",
+            type: "PURCHASE",
+            authorizationStatus: "APPROVED",
+            preAuthorization: "VALID",
+            response: "APPROVED"
+          },
+          authorizationTransactionInfo: {
+            originalCardNumber: "1234567890"
+          }
+        }
+      ];
+
+      const result = TransactionMapper.mapRetailPendingTransactions(
+        minimalPendingTransaction,
+        mockCorrelationId
+      );
+
+      expect(result.transactions).toHaveLength(1);
+      const transaction = result.transactions[0];
+      expect(transaction.merchantName).toBe("");
+      expect(transaction.descr).toBe("");
     });
   });
 
-  describe('filterCreditCardAccounts', () => {
-    const mockAccounts: Account[] = [
-      {
-        accountNumber: '1234567890',
-        accountCategory: 'CREDIT_CARD_ACCOUNTS'
-      },
-      {
-        accountNumber: '5555555555',
-        accountCategory: 'CHECKING_ACCOUNTS'
-      },
-      {
-        accountNumber: '0987654321',
-        accountCategory: 'CREDIT_CARD_ACCOUNTS'
+  describe("mapRetailPostedTransactions", () => {
+    const mockPostedTransactionsResponse: PostedTransactionsResponse = {
+      transactionDetail: {
+        recordTotal: 2,
+        moreRecords: false,
+        transactions: [
+          {
+            transactionAmount: 100.50,
+            cardNumberOrig: "1234567890",
+            description: "Test Transaction 1",
+            transactionCode: "123",
+            merchantName: "Test Merchant 1",
+            postedDate: "2025-01-01",
+            transactionDate: "2025-01-01",
+            eligibleForInstallments: "Y"
+          },
+          {
+            transactionAmount: 200.75,
+            cardNumberOrig: "0987654321",
+            description: "Test Transaction 2",
+            transactionCode: "456",
+            merchantName: "Test Merchant 2",
+            postedDate: "2025-01-02",
+            transactionDate: "2025-01-02",
+            eligibleForInstallments: ""
+          }
+        ]
       }
-    ];
+    };
 
-    test('should filter credit card accounts from getMySummary data', () => {
-      const sessionData = {
-        'mysummary/getMySummary': {
-          accounts: mockAccounts
-        }
-      };
-
-      const result = TransientCreditCardDataHelper.filterCreditCardAccounts(
-        sessionData,
+    test("should map posted transactions correctly", () => {
+      const result = TransactionMapper.mapRetailPostedTransactions(
+        mockPostedTransactionsResponse,
+        true,
+        "1234567890",
         mockCorrelationId
       );
 
-      expect(result).toHaveLength(2);
-      expect(result[0].accountNumber).toBe('1234567890');
-      expect(result[1].accountNumber).toBe('0987654321');
+      expect(result.transactions).toHaveLength(2);
+      expect(result.availableRecords).toBe(2);
+      expect(result.moreRecords).toBe(false);
+      expect(result.recordsReturned).toBe(2);
+
+      const firstTransaction = result.transactions[0];
+      expect(firstTransaction.amount).toBe(100.50);
+      expect(firstTransaction.cardNumber).toBe("1234567890");
+      expect(firstTransaction.descr).toBe("Test Transaction 1");
+      expect(firstTransaction.eligibleForDispute).toBe(true);
+      expect(firstTransaction.eligibleForInstallments).toBe("Y");
     });
 
-    test('should filter credit card accounts from verifyCredential data', () => {
-      const sessionData = {
-        'signin/verifyCredential': {
-          accounts: mockAccounts
+    test("should handle empty transactions array", () => {
+      const emptyResponse: PostedTransactionsResponse = {
+        transactionDetail: {
+          recordTotal: 0,
+          moreRecords: false,
+          transactions: []
         }
       };
 
-      const result = TransientCreditCardDataHelper.filterCreditCardAccounts(
-        sessionData,
+      const result = TransactionMapper.mapRetailPostedTransactions(
+        emptyResponse,
+        true,
+        "1234567890",
         mockCorrelationId
       );
 
-      expect(result).toHaveLength(2);
-      expect(result[0].accountNumber).toBe('1234567890');
-      expect(result[1].accountNumber).toBe('0987654321');
-    });
-
-    test('should throw error when neither getMySummary nor verifyCredential data exists', () => {
-      const sessionData = {
-        'someOtherEndpoint': {
-          accounts: mockAccounts
-        }
-      };
-
-      expect(() => {
-        TransientCreditCardDataHelper.filterCreditCardAccounts(
-          sessionData,
-          mockCorrelationId
-        );
-      }).toThrow(ClientError);
-    });
-  });
-
-  describe('checkDateInBetween', () => {
-    test('should return true for date within range', () => {
-      const result = TransientCreditCardDataHelper.checkDateInBetween(
-        '2024-01-15',
-        '2024-01-01',
-        '2024-01-31'
-      );
-      expect(result).toBe(true);
-    });
-
-    test('should return false for date before range', () => {
-      const result = TransientCreditCardDataHelper.checkDateInBetween(
-        '2024-01-01',
-        '2024-01-15',
-        '2024-01-31'
-      );
-      expect(result).toBe(false);
-    });
-
-    test('should return false for date after range', () => {
-      const result = TransientCreditCardDataHelper.checkDateInBetween(
-        '2024-02-01',
-        '2024-01-01',
-        '2024-01-31'
-      );
-      expect(result).toBe(false);
-    });
-
-    test('should return true for date equal to start date', () => {
-      const result = TransientCreditCardDataHelper.checkDateInBetween(
-        '2024-01-01',
-        '2024-01-01',
-        '2024-01-31'
-      );
-      expect(result).toBe(true);
-    });
-
-    test('should return true for date equal to end date', () => {
-      const result = TransientCreditCardDataHelper.checkDateInBetween(
-        '2024-01-31',
-        '2024-01-01',
-        '2024-01-31'
-      );
-      expect(result).toBe(true);
+      expect(result.transactions).toHaveLength(0);
+      expect(result.availableRecords).toBe(0);
+      expect(result.recordsReturned).toBe(0);
     });
   });
 });
