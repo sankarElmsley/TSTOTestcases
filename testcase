@@ -57,67 +57,121 @@ export default {
 
 
 -----------------------------------------------------------------
+// Fix import to match the actual export in the source file
 import { SbDilTransientCreditCardDataService } from "../src/service/ctccd/sbDilTransientCreditCardDataService";
 import { TransientCreditCardDataRequest } from "../src/model/ctccd/transientCreditCardDataRequest";
 import { CreditCardDetailSessionDataService } from "../src/service/ctccd/creditCardDetailSessionDataService";
 import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
 import { CdbContextService } from "../src/service/cdbcontext/cdbContextService";
 import { EligibilityDecisionService } from "../src/service/dcn/eligibilityDecisionService";
-import { TransientCreditCardDataHelper } from "../src/service/util/transientCreditCardDataHelper";
 import { ClientError } from "../src/util/clientError";
 import { ErrorCodes } from "../src/util/errorCodes";
-import { ServerError } from "../src/util/serverError";
+import { ApiConstants } from "../src/util/constants";
 
-// Mock all needed modules
-jest.mock("../src/service/ctccd/creditCardDetailSessionDataService");
-jest.mock("../src/service/ccar/creditCardArrangementReportService");
-jest.mock("../src/service/cdbcontext/cdbContextService");
-jest.mock("../src/service/dcn/eligibilityDecisionService");
+// Make sure we're importing or mocking TransientCreditCardDataHelper correctly
+const mockFilterCreditCardAccounts = jest.fn();
+const mockGetCardNumber = jest.fn();
+const mockIsDateExpired = jest.fn();
+
+// Mock with proper namespace
 jest.mock("../src/service/util/transientCreditCardDataHelper", () => ({
     TransientCreditCardDataHelper: {
-        filterCreditCardAccounts: jest.fn(),
-        getCardNumber: jest.fn(),
-        isDateExpired: jest.fn()
+        filterCreditCardAccounts: mockFilterCreditCardAccounts,
+        getCardNumber: mockGetCardNumber,
+        isDateExpired: mockIsDateExpired
     }
 }));
 
-// Mock console to avoid test output pollution
+// Mock dependent services
+jest.mock("../src/service/ctccd/creditCardDetailSessionDataService", () => ({
+    CreditCardDetailSessionDataService: jest.fn()
+}));
+
+jest.mock("../src/service/ccar/creditCardArrangementReportService", () => ({
+    CreditCardArrangementReportService: jest.fn()
+}));
+
+jest.mock("../src/service/cdbcontext/cdbContextService", () => ({
+    CdbContextService: jest.fn()
+}));
+
+jest.mock("../src/service/dcn/eligibilityDecisionService", () => ({
+    EligibilityDecisionService: jest.fn()
+}));
+
+// Suppress console logs
+const mockConsole = {
+    trace: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn()
+};
+
 const originalConsole = global.console;
-beforeAll(() => {
-    global.console = {
-        ...console,
-        trace: jest.fn(),
-        info: jest.fn(),
-        debug: jest.fn(),
-        warn: jest.fn(),
-        error: jest.fn()
-    };
-});
 
-afterAll(() => {
-    global.console = originalConsole;
-});
-
-describe("SbDilTransientCreditCardDataService", () => {
-    // Test setup variables
-    const mockEcifId = "test-ecif-id";
-    const mockSessionId = "test-session-id";
-    const mockCorrelationId = "test-correlation-id";
-    const mockAccountIndex = 1;
-    const mockCardNumber = "1234567890123456";
-    const mockRequestBody = { accountIndex: mockAccountIndex };
-
-    // Reset mocks before each test
+describe("SbDilTransientCreditCardDataService Tests", () => {
+    beforeAll(() => {
+        global.console = {...originalConsole, ...mockConsole};
+    });
+    
+    afterAll(() => {
+        global.console = originalConsole;
+    });
+    
     beforeEach(() => {
         jest.clearAllMocks();
     });
-
-    test("should retrieve SB DIL eligibility successfully", async () => {
-        // Mock CDB session response
-        const mockSessionResponse = { data: [{ accountDetails: {} }] };
+    
+    test("should initialize correctly", () => {
+        // Mock service instances
+        const mockCreditCardDetailService = { fetchCardDetails: jest.fn() };
+        const mockCreditCardArrangementService = { getCreditCardDetail: jest.fn() };
+        const mockCdbContextService = { getSessionData: jest.fn() };
+        const mockDecisionService = { getDilEligibilityDecision: jest.fn() };
         
-        // Mock service instance creation
-        const mockCdbContextService = {
+        // Set up constructor mocks
+        (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCreditCardDetailService);
+        (CreditCardArrangementReportService as jest.Mock).mockImplementation(() => mockCreditCardArrangementService);
+        (CdbContextService as jest.Mock).mockImplementation(() => mockCdbContextService);
+        (EligibilityDecisionService as jest.Mock).mockImplementation(() => mockDecisionService);
+        
+        // Test variables
+        const mockEcifId = "test-ecif-id";
+        const mockSessionId = "test-session-id";
+        const mockCorrelationId = "test-correlation-id";
+        const mockRequestBody = { accountIndex: 1 };
+        
+        // Create service instance
+        const service = new SbDilTransientCreditCardDataService(
+            mockEcifId,
+            mockSessionId,
+            mockRequestBody as TransientCreditCardDataRequest,
+            mockCorrelationId
+        );
+        
+        // Basic assertion to ensure instantiation worked
+        expect(service).toBeDefined();
+        expect(CreditCardDetailSessionDataService).toHaveBeenCalledWith(mockCorrelationId);
+        expect(CreditCardArrangementReportService).toHaveBeenCalledWith(mockCorrelationId);
+        expect(CdbContextService).toHaveBeenCalledWith(mockSessionId, mockEcifId, mockCorrelationId);
+        expect(EligibilityDecisionService).toHaveBeenCalledWith(mockCorrelationId);
+    });
+    
+    test("should retrieve SB DIL eligibility successfully", async () => {
+        // Test data
+        const mockEcifId = "test-ecif-id";
+        const mockSessionId = "test-session-id";
+        const mockCorrelationId = "test-correlation-id";
+        const mockAccountIndex = 1;
+        const mockCardNumber = "1234567890123456";
+        const mockRequestBody = { accountIndex: mockAccountIndex };
+        
+        // Mock SessionData response
+        const mockSessionResponse = { data: [{ account: "data" }] };
+        
+        // Mock service responses
+        const mockCdbContext = {
             getSessionData: jest.fn().mockResolvedValue(mockSessionResponse)
         };
         
@@ -134,78 +188,111 @@ describe("SbDilTransientCreditCardDataService", () => {
             ccarCustomerDetail: {}
         };
         
-        const mockCreditCardDetailSessionDataService = {
+        const mockCreditCardDetailService = {
             fetchCardDetails: jest.fn().mockResolvedValue(mockSessionData)
         };
         
         const mockDecisionResponse = { eligibility: "ELIGIBLE" };
         
-        const mockEligibilityDecisionService = {
+        const mockDecisionService = {
             getDilEligibilityDecision: jest.fn().mockResolvedValue(mockDecisionResponse)
         };
         
-        // Mock static helper methods
-        TransientCreditCardDataHelper.filterCreditCardAccounts.mockReturnValue([{ card: "details" }]);
-        TransientCreditCardDataHelper.getCardNumber.mockReturnValue(mockCardNumber);
+        const mockCreditCardArrangementService = {
+            getCreditCardDetail: jest.fn()
+        };
         
-        // Mock constructors
-        (CdbContextService as jest.Mock).mockImplementation(() => mockCdbContextService);
-        (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCreditCardDetailSessionDataService);
-        (EligibilityDecisionService as jest.Mock).mockImplementation(() => mockEligibilityDecisionService);
-        (CreditCardArrangementReportService as jest.Mock).mockImplementation(() => ({}));
-
+        // Set up constructor mocks
+        (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCreditCardDetailService);
+        (CreditCardArrangementReportService as jest.Mock).mockImplementation(() => mockCreditCardArrangementService);
+        (CdbContextService as jest.Mock).mockImplementation(() => mockCdbContext);
+        (EligibilityDecisionService as jest.Mock).mockImplementation(() => mockDecisionService);
+        
+        // Mock helper functions
+        mockFilterCreditCardAccounts.mockReturnValue([{ cardNumber: mockCardNumber }]);
+        mockGetCardNumber.mockReturnValue(mockCardNumber);
+        
         // Create service and call method
         const service = new SbDilTransientCreditCardDataService(
-            mockEcifId, 
-            mockSessionId, 
-            mockRequestBody as TransientCreditCardDataRequest, 
+            mockEcifId,
+            mockSessionId,
+            mockRequestBody as TransientCreditCardDataRequest,
             mockCorrelationId
         );
         
         const result = await service.getSbDilEligibility();
         
         // Assertions
+        expect(result).toBeDefined();
         expect(result.statusCode).toBe(200);
         expect(JSON.parse(result.body)).toEqual(mockDecisionResponse);
+        expect(mockCdbContext.getSessionData).toHaveBeenCalled();
+        expect(mockFilterCreditCardAccounts).toHaveBeenCalledWith(mockSessionResponse.data, mockCorrelationId);
+        expect(mockGetCardNumber).toHaveBeenCalledWith([{ cardNumber: mockCardNumber }], mockAccountIndex, mockCorrelationId);
+        expect(mockCreditCardDetailService.fetchCardDetails).toHaveBeenCalledWith(mockEcifId, mockSessionId, mockAccountIndex);
+        expect(mockDecisionService.getDilEligibilityDecision).toHaveBeenCalledWith(
+            "test-lob", 
+            "test-code", 
+            "test-type"
+        );
     });
-
+    
     test("should throw ClientError when no credit cards found", async () => {
-        // Mock CDB session response
+        // Test data
+        const mockEcifId = "test-ecif-id";
+        const mockSessionId = "test-session-id";
+        const mockCorrelationId = "test-correlation-id";
+        const mockAccountIndex = 1;
+        const mockRequestBody = { accountIndex: mockAccountIndex };
+        
+        // Mock SessionData response
         const mockSessionResponse = { data: [] };
         
-        // Mock CdbContextService
-        const mockCdbContextService = {
+        // Mock service responses
+        const mockCdbContext = {
             getSessionData: jest.fn().mockResolvedValue(mockSessionResponse)
         };
         
-        // Mock other services (not expected to be called)
-        const mockCreditCardDetailSessionDataService = {
+        const mockCreditCardDetailService = {
             fetchCardDetails: jest.fn()
         };
         
-        // Mock static helper methods
-        TransientCreditCardDataHelper.filterCreditCardAccounts.mockReturnValue([]);
+        const mockDecisionService = {
+            getDilEligibilityDecision: jest.fn()
+        };
         
-        // Mock constructors
-        (CdbContextService as jest.Mock).mockImplementation(() => mockCdbContextService);
-        (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCreditCardDetailSessionDataService);
-        (EligibilityDecisionService as jest.Mock).mockImplementation(() => ({}));
-        (CreditCardArrangementReportService as jest.Mock).mockImplementation(() => ({}));
-
-        // Create service and call method
+        const mockCreditCardArrangementService = {
+            getCreditCardDetail: jest.fn()
+        };
+        
+        // Mock constructor calls
+        (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCreditCardDetailService);
+        (CreditCardArrangementReportService as jest.Mock).mockImplementation(() => mockCreditCardArrangementService);
+        (CdbContextService as jest.Mock).mockImplementation(() => mockCdbContext);
+        (EligibilityDecisionService as jest.Mock).mockImplementation(() => mockDecisionService);
+        
+        // Mock helper functions - important for triggering the error
+        mockFilterCreditCardAccounts.mockReturnValue([]);
+        
+        // Create service instance
         const service = new SbDilTransientCreditCardDataService(
-            mockEcifId, 
-            mockSessionId, 
-            mockRequestBody as TransientCreditCardDataRequest, 
+            mockEcifId,
+            mockSessionId,
+            mockRequestBody as TransientCreditCardDataRequest,
             mockCorrelationId
         );
         
-        // Expect the proper error to be thrown
-        await expect(service.getSbDilEligibility()).rejects.toThrow(
-            new ClientError(
-                ErrorCodes.CUSTOMER_CC_COUNT_ZERO.errorMessage,
-                ErrorCodes.CUSTOMER_CC_COUNT_ZERO.errorCode
-            )
-        );
+        // Execute and verify error
+        await expect(service.getSbDilEligibility()).rejects.toThrow(ClientError);
+        await expect(service.getSbDilEligibility()).rejects.toMatchObject({
+            message: ErrorCodes.CUSTOMER_CC_COUNT_ZERO.errorMessage,
+            code: ErrorCodes.CUSTOMER_CC_COUNT_ZERO.errorCode
+        });
+        
+        // Verify key function calls
+        expect(mockCdbContext.getSessionData).toHaveBeenCalled();
+        expect(mockFilterCreditCardAccounts).toHaveBeenCalledWith(mockSessionResponse.data, mockCorrelationId);
+        expect(mockCreditCardDetailService.fetchCardDetails).not.toHaveBeenCalled();
+        expect(mockDecisionService.getDilEligibilityDecision).not.toHaveBeenCalled();
     });
 });
