@@ -104,6 +104,7 @@ global.console = {
 
 // Now import the necessary modules
 import { SbDilTransientCreditCardDataService } from '../src/service/ctccd/sbDilTransientCreditCardDataService';
+import { TransientCreditCardDataRequest } from '../src/model/ctccd/transientCreditCardDataRequest';
 import { CreditCardDetailSessionDataService } from '../src/service/ctccd/creditCardDetailSessionDataService';
 import { CreditCardArrangementReportService } from '../src/service/ccar/creditCardArrangementReportService';
 import { CdbContextService } from '../src/service/cdbcontext/cdbContextService';
@@ -119,7 +120,11 @@ describe('SbDilTransientCreditCardDataService', () => {
   const mockCorrelationId = 'test-correlation-id';
   const mockAccountIndex = 1;
   const mockCardNumber = '1234567890123456';
-  const mockRequestBody = { accountIndex: mockAccountIndex };
+  
+  // Properly type the request body
+  const mockRequestBody: TransientCreditCardDataRequest = { 
+    accountIndex: mockAccountIndex 
+  };
   
   // Reset mocks before each test
   beforeEach(() => {
@@ -158,9 +163,10 @@ describe('SbDilTransientCreditCardDataService', () => {
       mockCorrelationId
     );
     
-    // Test
+    // Test using try/catch to properly handle the expected error
     try {
       await service.getSbDilEligibility();
+      // If we get here, the test should fail because an error should have been thrown
       fail('Expected an error to be thrown');
     } catch (error) {
       // Verify it's the expected ClientError
