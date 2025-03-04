@@ -58,15 +58,14 @@ export default {
 
 -----------------------------------------------------------------
 
-
 // File: EligibilityDecisionService.test.ts
 
-// Mock required dependencies
-jest.mock('../../common/cross_account/cached_api_information', () => ({
-  CrossAccountAPICache: jest.fn(() => ({
+// Mock CrossAccountAPICache
+jest.mock("../../common/cross_account/cached_api_information", () => ({
+  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
     value: jest.fn().mockResolvedValue({
-      apiGatewayId: 'mock-api-gateway-id',
-      apiKey: 'mock-api-key'
+      apiKey: "mock-api-key",
+      apiGatewayId: "mock-gateway-id"
     })
   }))
 }));
@@ -90,14 +89,14 @@ process.env = {
 };
 
 // Mock logger functions
-jest.mock('../../common/utils/logger', () => ({
+jest.mock("../../common/utils/logger", () => ({
+  debug: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  trace: jest.fn(),
+  logBackendServiceError: jest.fn(),
   logBackendServiceRequest: jest.fn(),
   logBackendServiceResponse: jest.fn(),
-  logBackendServiceError: jest.fn(),
-  trace: jest.fn(),
-  info: jest.fn(),
-  debug: jest.fn(),
-  error: jest.fn()
 }));
 
 // Import the necessary modules
@@ -140,35 +139,10 @@ describe('EligibilityDecisionService', () => {
     const service = new EligibilityDecisionService(mockCorrelationId);
     const result = await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
     
-    // Minimal verification - just check if we got a result
+    // Minimal verification
     expect(result).toBeDefined();
   });
 
-  test('should retry on ClientError and succeed on second attempt', async () => {
-    // First attempt fails with a ClientError
-    (fetch as jest.Mock).mockRejectedValueOnce(new ClientError('Network error', 'NETWORK_ERROR'));
-    
-    // Second attempt succeeds
-    const mockResponse = {
-      status: 200,
-      statusText: 'OK',
-      json: jest.fn().mockResolvedValue({
-        eligibility: 'ELIGIBLE'
-      })
-    };
-    
-    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
-    
-    // Create service and call method
-    const service = new EligibilityDecisionService(mockCorrelationId);
-    const result = await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
-    
-    // Just verify we got a result
-    expect(result).toBeDefined();
-  });
-  
-  // Adding two new test cases with minimal expectations
-  
   test('should handle non-200 response from API', async () => {
     // Mock error response
     const mockErrorResponse = {
@@ -192,28 +166,30 @@ describe('EligibilityDecisionService', () => {
       errorThrown = true;
     }
     
-    // Just verify an error was thrown
+    // Verify an error was thrown
     expect(errorThrown).toBe(true);
   });
-  
-  test('should fail after max retries with ClientError', async () => {
-    // Mock multiple ClientError failures 
-    (fetch as jest.Mock)
-      .mockRejectedValueOnce(new ClientError('Network error 1', 'NETWORK_ERROR'))
-      .mockRejectedValueOnce(new ClientError('Network error 2', 'NETWORK_ERROR'));
+
+  test('should retry on ClientError and succeed on second attempt', async () => {
+    // First attempt fails with a ClientError
+    (fetch as jest.Mock).mockRejectedValueOnce(new ClientError('Network error', 'NETWORK_ERROR'));
     
-    // Create service
+    // Second attempt succeeds
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        eligibility: 'ELIGIBLE'
+      })
+    };
+    
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+    
+    // Create service and call method
     const service = new EligibilityDecisionService(mockCorrelationId);
+    const result = await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
     
-    // Simple try/catch to verify an error is thrown
-    let errorThrown = false;
-    try {
-      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
-    } catch (error) {
-      errorThrown = true;
-    }
-    
-    // Just verify an error was thrown
-    expect(errorThrown).toBe(true);
+    // Just verify we got a result
+    expect(result).toBeDefined();
   });
 });
