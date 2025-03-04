@@ -104,6 +104,9 @@ import { EligibilityDecisionService } from '../../service/dcn/eligibilityDecisio
 import { CrossAccountAPICache } from '../../common/cross_account/cached_api_information';
 import { ServerError } from '../../util/serverError';
 import { ClientError } from '../../util/clientError';
+import { ApiConstants } from '../../util/constants';
+import { ErrorCodes } from '../../util/errorCodes';
+import { trace, info, debug, error, logBackendServiceRequest, logBackendServiceResponse, logBackendServiceError } from '../../common/utils/logger';
 
 describe('EligibilityDecisionService', () => {
   // Test setup
@@ -129,7 +132,8 @@ describe('EligibilityDecisionService', () => {
       status: 200,
       statusText: 'OK',
       json: jest.fn().mockResolvedValue({
-        eligibility: 'ELIGIBLE'
+        eligibility: 'ELIGIBLE',
+        reason: 'QUALIFYING_PRODUCT'
       })
     };
     
@@ -139,8 +143,9 @@ describe('EligibilityDecisionService', () => {
     const service = new EligibilityDecisionService(mockCorrelationId);
     const result = await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
     
-    // Minimal verification
+    // Verify the result
     expect(result).toBeDefined();
+    expect(result.eligibility).toBe('ELIGIBLE');
   });
 
   test('should handle non-200 response from API', async () => {
@@ -191,5 +196,174 @@ describe('EligibilityDecisionService', () => {
     
     // Just verify we got a result
     expect(result).toBeDefined();
+  });
+  
+  test('should fail after max retries with ClientError', async () => {
+    // Mock ClientError for all attempts 
+    (fetch as jest.Mock)
+      .mockRejectedValueOnce(new ClientError('Network error 1', 'NETWORK_ERROR'))
+      .mockRejectedValueOnce(new ClientError('Network error 2', 'NETWORK_ERROR'));
+    
+    // Create service
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    
+    // Simple try/catch to verify an error is thrown
+    let errorThrown = false;
+    let caughtError;
+    try {
+      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
+    } catch (error) {
+      errorThrown = true;
+      caughtError = error;
+    }
+    
+    // Verify an error was thrown
+    expect(errorThrown).toBe(true);
+    expect(caughtError instanceof ServerError).toBe(true);
+  });
+  
+  test('should throw original error for non-ClientError exceptions', async () => {
+    // Mock a non-ClientError exception
+    const originalError = new Error('Some unexpected error');
+    (fetch as jest.Mock).mockRejectedValueOnce(originalError);
+    
+    // Create service
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    
+    // Simple try/catch to verify the original error is thrown
+    let caughtError;
+    try {
+      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
+    } catch (error) {
+      caughtError = error;
+    }
+    
+    // Verify the original error was thrown
+    expect(caughtError).toBe(originalError);
+  });
+  
+  test('should use trace logging for entry and exit points', async () => {
+    // Mock successful response
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        eligibility: 'ELIGIBLE'
+      })
+    };
+    
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+    
+    // Create service and call method
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
+    
+    // Verify trace was called with entry and exit points
+    expect(trace).toHaveBeenCalledWith(
+      expect.stringContaining('In getDilEligibilityDecision'),
+      mockCorrelationId
+    );
+    
+    expect(trace).toHaveBeenCalledWith(
+      expect.stringContaining('Out getDilEligibilityDecision'),
+      mockCorrelationId
+    );
+  });
+  
+  test('should log backend service request and response', async () => {
+    // Mock successful response
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        eligibility: 'ELIGIBLE'
+      })
+    };
+    
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+    
+    // Create service and call method
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
+    
+    // Verify backend service logging
+    expect(logBackendServiceRequest).toHaveBeenCalled();
+    expect(logBackendServiceResponse).toHaveBeenCalled();
+  });
+  
+  test('should log error on API failure', async () => {
+    // Mock error response
+    const mockErrorResponse = {
+      status: 400,
+      statusText: 'Bad Request',
+      json: jest.fn().mockResolvedValue({
+        errorCode: 'INVALID_REQUEST'
+      })
+    };
+    
+    (fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
+    
+    // Create service
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    
+    // Call method and catch error
+    try {
+      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
+    } catch (e) {
+      // Expected error
+    }
+    
+    // Verify error was logged
+    expect(error).toHaveBeenCalled();
+  });
+  
+  test('should log error on retry failure', async () => {
+    // Mock ClientError for all attempts 
+    (fetch as jest.Mock)
+      .mockRejectedValueOnce(new ClientError('Network error 1', 'NETWORK_ERROR'))
+      .mockRejectedValueOnce(new ClientError('Network error 2', 'NETWORK_ERROR'));
+    
+    // Create service
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    
+    // Call method and catch error
+    try {
+      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
+    } catch (e) {
+      // Expected error
+    }
+    
+    // Verify error logging
+    expect(error).toHaveBeenCalled();
+    expect(logBackendServiceError).toHaveBeenCalled();
+  });
+  
+  test('should send correct request payload', async () => {
+    // Mock successful response
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        eligibility: 'ELIGIBLE'
+      })
+    };
+    
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+    
+    // Create service and call method
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
+    
+    // Verify fetch was called with correct payload
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [_, requestInfo] = (fetch as jest.Mock).mock.calls[0];
+    
+    // Parse the request body and check its structure
+    const requestBody = JSON.parse(requestInfo.body);
+    expect(requestBody).toHaveProperty('decisionName', ApiConstants.DECISION_NAME_INSTALLMENT_LENDING);
+    expect(requestBody).toHaveProperty('context');
+    expect(requestBody.context).toHaveProperty('LOB', mockLob);
+    expect(requestBody.context).toHaveProperty('CPC', mockClientProductCode);
+    expect(requestBody.context).toHaveProperty('CustType', mockCustomerType);
   });
 });
