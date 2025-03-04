@@ -60,7 +60,9 @@ export default {
 
 // File: EligibilityDecisionService.test.ts
 
-// Mock CrossAccountAPICache
+// File: EligibilityDecisionService.test.ts
+
+// Properly mock CrossAccountAPICache with a correctly structured implementation
 jest.mock("../../common/cross_account/cached_api_information", () => ({
   CrossAccountAPICache: jest.fn().mockImplementation(() => ({
     value: jest.fn().mockResolvedValue({
@@ -118,6 +120,14 @@ describe('EligibilityDecisionService', () => {
   // Reset mocks before each test
   beforeEach(() => {
     jest.clearAllMocks();
+    
+    // We need to make sure each test gets a fresh mock implementation
+    (CrossAccountAPICache as jest.Mock).mockImplementation(() => ({
+      value: jest.fn().mockResolvedValue({
+        apiKey: "mock-api-key",
+        apiGatewayId: "mock-gateway-id"
+      })
+    }));
   });
 
   test('should create service instance', () => {
@@ -146,6 +156,14 @@ describe('EligibilityDecisionService', () => {
     // Verify the result
     expect(result).toBeDefined();
     expect(result.eligibility).toBe('ELIGIBLE');
+    expect(result.reason).toBe('QUALIFYING_PRODUCT');
+    
+    // Verify fetch was called correctly
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, options] = (fetch as jest.Mock).mock.calls[0];
+    expect(url).toContain(process.env.GET_ELIGIBILITY_DECISION_URL);
+    expect(options.headers['x-api-key']).toBe('mock-api-key');
+    expect(options.headers['x-apigw-api-id']).toBe('mock-gateway-id');
   });
 
   test('should handle non-200 response from API', async () => {
@@ -163,16 +181,14 @@ describe('EligibilityDecisionService', () => {
     // Create service
     const service = new EligibilityDecisionService(mockCorrelationId);
     
-    // Simple try/catch to verify an error is thrown
-    let errorThrown = false;
-    try {
-      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
-    } catch (error) {
-      errorThrown = true;
-    }
+    // Expect the service to throw a ServerError
+    await expect(
+      service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType)
+    ).rejects.toThrow(ServerError);
     
-    // Verify an error was thrown
-    expect(errorThrown).toBe(true);
+    // Verify error was logged
+    expect(error).toHaveBeenCalled();
+    expect(logBackendServiceResponse).toHaveBeenCalled();
   });
 
   test('should retry on ClientError and succeed on second attempt', async () => {
@@ -194,8 +210,16 @@ describe('EligibilityDecisionService', () => {
     const service = new EligibilityDecisionService(mockCorrelationId);
     const result = await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
     
-    // Just verify we got a result
+    // Verify we got a result
     expect(result).toBeDefined();
+    expect(result.eligibility).toBe('ELIGIBLE');
+    
+    // Verify fetch was called twice
+    expect(fetch).toHaveBeenCalledTimes(2);
+    
+    // Verify error logging for the first attempt
+    expect(error).toHaveBeenCalled();
+    expect(logBackendServiceError).toHaveBeenCalled();
   });
   
   test('should fail after max retries with ClientError', async () => {
@@ -207,19 +231,20 @@ describe('EligibilityDecisionService', () => {
     // Create service
     const service = new EligibilityDecisionService(mockCorrelationId);
     
-    // Simple try/catch to verify an error is thrown
-    let errorThrown = false;
-    let caughtError;
-    try {
-      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
-    } catch (error) {
-      errorThrown = true;
-      caughtError = error;
-    }
+    // Expect the service to throw a ServerError after max retries
+    await expect(
+      service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType)
+    ).rejects.toThrow(ServerError);
     
-    // Verify an error was thrown
-    expect(errorThrown).toBe(true);
-    expect(caughtError instanceof ServerError).toBe(true);
+    // Verify fetch was called twice (max retries)
+    expect(fetch).toHaveBeenCalledTimes(2);
+    
+    // Verify error logging
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('max retries'),
+      expect.anything(),
+      expect.anything()
+    );
   });
   
   test('should throw original error for non-ClientError exceptions', async () => {
@@ -230,16 +255,16 @@ describe('EligibilityDecisionService', () => {
     // Create service
     const service = new EligibilityDecisionService(mockCorrelationId);
     
-    // Simple try/catch to verify the original error is thrown
-    let caughtError;
-    try {
-      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
-    } catch (error) {
-      caughtError = error;
-    }
+    // Expect the service to throw the original error
+    await expect(
+      service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType)
+    ).rejects.toThrow(originalError);
     
-    // Verify the original error was thrown
-    expect(caughtError).toBe(originalError);
+    // Verify fetch was called once
+    expect(fetch).toHaveBeenCalledTimes(1);
+    
+    // Verify error logging
+    expect(logBackendServiceError).toHaveBeenCalled();
   });
   
   test('should use trace logging for entry and exit points', async () => {
@@ -287,8 +312,18 @@ describe('EligibilityDecisionService', () => {
     await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
     
     // Verify backend service logging
-    expect(logBackendServiceRequest).toHaveBeenCalled();
-    expect(logBackendServiceResponse).toHaveBeenCalled();
+    expect(logBackendServiceRequest).toHaveBeenCalledWith(
+      'DCN',
+      expect.any(String),
+      mockCorrelationId
+    );
+    
+    expect(logBackendServiceResponse).toHaveBeenCalledWith(
+      'DCN',
+      expect.any(Number),
+      expect.any(String),
+      mockCorrelationId
+    );
   });
   
   test('should log error on API failure', async () => {
@@ -307,14 +342,15 @@ describe('EligibilityDecisionService', () => {
     const service = new EligibilityDecisionService(mockCorrelationId);
     
     // Call method and catch error
-    try {
-      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
-    } catch (e) {
-      // Expected error
-    }
+    await expect(
+      service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType)
+    ).rejects.toThrow();
     
     // Verify error was logged
-    expect(error).toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('service failed after attempt'),
+      mockCorrelationId
+    );
   });
   
   test('should log error on retry failure', async () => {
@@ -327,11 +363,9 @@ describe('EligibilityDecisionService', () => {
     const service = new EligibilityDecisionService(mockCorrelationId);
     
     // Call method and catch error
-    try {
-      await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
-    } catch (e) {
-      // Expected error
-    }
+    await expect(
+      service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType)
+    ).rejects.toThrow();
     
     // Verify error logging
     expect(error).toHaveBeenCalled();
@@ -356,7 +390,7 @@ describe('EligibilityDecisionService', () => {
     
     // Verify fetch was called with correct payload
     expect(fetch).toHaveBeenCalledTimes(1);
-    const [_, requestInfo] = (fetch as jest.Mock).mock.calls[0];
+    const [url, requestInfo] = (fetch as jest.Mock).mock.calls[0];
     
     // Parse the request body and check its structure
     const requestBody = JSON.parse(requestInfo.body);
@@ -365,5 +399,65 @@ describe('EligibilityDecisionService', () => {
     expect(requestBody.context).toHaveProperty('LOB', mockLob);
     expect(requestBody.context).toHaveProperty('CPC', mockClientProductCode);
     expect(requestBody.context).toHaveProperty('CustType', mockCustomerType);
+  });
+
+  test('should include all required headers in request', async () => {
+    // Mock successful response
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        eligibility: 'ELIGIBLE'
+      })
+    };
+    
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+    
+    // Create service and call method
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    await service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType);
+    
+    // Verify fetch was called with correct headers
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, requestInfo] = (fetch as jest.Mock).mock.calls[0];
+    
+    // Check headers
+    expect(requestInfo.headers).toHaveProperty('Content-Type', 'application/json');
+    expect(requestInfo.headers).toHaveProperty('x-apigw-api-id', 'mock-gateway-id');
+    expect(requestInfo.headers).toHaveProperty('x-api-key', 'mock-api-key');
+    expect(requestInfo.headers).toHaveProperty('x-request-id', mockCorrelationId);
+    expect(requestInfo.headers).toHaveProperty('x-tapi-interaction-id', mockCorrelationId);
+    expect(requestInfo.headers).toHaveProperty('x-app-cat-id', ApiConstants.APP_CAT_ID);
+    expect(requestInfo.headers).toHaveProperty('x-client-id', ApiConstants.APP_CAT_ID);
+    expect(requestInfo.headers).toHaveProperty('x-fapi-financial-id', ApiConstants.API_FINANCIAL_ID);
+  });
+
+  test('should handle error during CrossAccountAPICache creation', () => {
+    // Mock CrossAccountAPICache to throw an error during instantiation
+    jest.resetModules();
+    jest.mock("../../common/cross_account/cached_api_information", () => ({
+      CrossAccountAPICache: jest.fn().mockImplementation(() => {
+        throw new Error('Failed to create cache');
+      })
+    }));
+    
+    // Reimport the modules to get the new mock
+    const { EligibilityDecisionService } = require('../../service/dcn/eligibilityDecisionService');
+    
+    // Expect the constructor to throw a ServerError
+    expect(() => {
+      new EligibilityDecisionService(mockCorrelationId);
+    }).toThrow(ServerError);
+    
+    // Restore the original mock
+    jest.resetModules();
+    jest.mock("../../common/cross_account/cached_api_information", () => ({
+      CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+        value: jest.fn().mockResolvedValue({
+          apiKey: "mock-api-key",
+          apiGatewayId: "mock-gateway-id"
+        })
+      }))
+    }));
   });
 });
