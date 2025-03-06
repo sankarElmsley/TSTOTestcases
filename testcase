@@ -461,3 +461,86 @@ describe('EligibilityDecisionService', () => {
     }));
   });
 });
+
+====================================================================================================================
+
+describe("Scenario: TransactionHistoryFlowService.getTransactionHistoryEndpointFlowTypes returns valid data", () => {
+  let transactionHistoryFlowService;
+  // Define accountResponse mock
+  const accountResponse = {
+    accounts: [{ accountIndex: 0, accountType: 'CREDIT_CARD', useDdsFlow: false }]
+  };
+
+  beforeEach(() => {
+    transactionHistoryFlowService = new TransactionHistoryFlowService("ecifId", "sessionId", "correlationId");
+  });
+
+  test("getTransactionHistoryEndpointFlowTypes: valid ecifId, sessionId and accountIndex; returns the API response", async () => {
+    transactionHistoryFlowService.getTransactionHistoryFlowType = jest.fn().mockImplementation(() => {
+      return accountResponse;
+    });
+    const apiResponse = await transactionHistoryFlowService.getTransactionHistoryEndpointFlowTypes();
+    expect(apiResponse).not.toBeNull();
+    expect(apiResponse.body).not.toBeNull();
+    expect(apiResponse.headers).not.toBeNull();
+    expect(apiResponse.statusCode).not.toBeNull();
+    expect(apiResponse.statusCode).toEqual(200);
+  });
+
+  test("getTransactionHistoryFlowType: return account response", async () => {
+    const accounts = [{ 
+      accountIndex: 0, 
+      accountCategory: "CREDIT_CARD_ACCOUNTS", 
+      accountType: "credit", 
+      accountNumber: "123456789"
+    }];
+    const sessionData = { 
+      "mysummary/getMySummary": { 
+        accounts: accounts 
+      } 
+    };
+    
+    transactionHistoryFlowService.filterCreditCardAccounts = jest.fn().mockImplementation(() => {
+      return accounts;
+    });
+    CdbContextService.prototype.getSessionData = jest.fn().mockImplementation(() => {
+      return { data: sessionData };
+    });
+    CreditcardUtilityService.prototype.getBinRangesCached = jest.fn().mockImplementation(() => {
+      return [];
+    });
+    const response = await transactionHistoryFlowService.getTransactionHistoryFlowType();
+    expect(response.accounts).toHaveLength(1);
+    expect(response.accounts[0].accountType).toEqual("CREDIT_CARD");
+  });
+
+  test("getTransactionHistoryFlowType: return empty response", async () => {
+    const accounts = [];
+    transactionHistoryFlowService.filterCreditCardAccounts = jest.fn().mockImplementation(() => {
+      return accounts;
+    });
+    CdbContextService.prototype.getSessionData = jest.fn().mockImplementation(() => {
+      return { data: { "mysummary/getMySummary": { accounts: [] } } };
+    });
+    CreditcardUtilityService.prototype.getBinRangesCached = jest.fn().mockImplementation(() => {
+      return [];
+    });
+    const response = await transactionHistoryFlowService.getTransactionHistoryFlowType();
+    expect(response.accounts.length).toEqual(0);
+  });
+
+  test("filterCreditCardAccounts: return creditCardAccounts", async () => {
+    const creditCardAccount = { 
+      accountCategory: "CREDIT_CARD_ACCOUNTS", 
+      accountIndex: 0, 
+      accountType: "credit", 
+      useDdsFlow: false 
+    };
+    const summaryAccounts = {
+      accounts: [creditCardAccount]
+    };
+    const sessionData = { "mysummary/getMySummary": summaryAccounts };
+    const returnValue = transactionHistoryFlowService.filterCreditCardAccounts(sessionData);
+    expect(returnValue).toEqual(summaryAccounts.accounts);
+  });
+});
