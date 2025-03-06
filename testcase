@@ -58,349 +58,426 @@ export default {
 
 -----------------------------------------------------------------
 
-// Mock required dependencies first
-jest.mock('../common/utils/logger', () => ({
-  trace: jest.fn(),
+// Mock CrossAccountAPICache
+jest.mock("../../common/cross_account/cached_api_information", () => ({
+  CrossAccountAPICache: jest.fn().mockImplementation(() => ({
+    value: jest.fn().mockResolvedValue({
+      apiGatewayId: 'mock-api-gateway-id',
+      apiKey: 'mock-api-key'
+    })
+  }))
+}));
+
+// Mock fetch
+global.fetch = jest.fn();
+
+// Mock performance API
+global.performance = {
+  ...global.performance,
+  now: jest.fn().mockReturnValue(1000)
+};
+
+// Mock environment variables
+process.env = {
+  ...process.env,
+  CROSS_REGION: 'us-east-1',
+  REGION: 'us-east-1',
+  CROSS_ACCOUNT_ROLE_FOR_DCN: 'mock-role-arn',
+  SSM_PARAM_DCN_API_KEY: 'mock-api-key-param',
+  SSM_PARAM_DCN_GATEWAY_HOST: 'mock-api-gateway-id.execute-api.us-east-1.amazonaws.com',
+  GET_ELIGIBILITY_DECISION_URL: 'https://mock-api-gateway-id.execute-api.us-east-1.amazonaws.com',
+};
+
+// Mock logger functions
+jest.mock("../../common/utils/logger", () => ({
   debug: jest.fn(),
+  error: jest.fn(),
   info: jest.fn(),
-  error: jest.fn()
+  trace: jest.fn(),
+  logBackendServiceError: jest.fn(),
+  logBackendServiceRequest: jest.fn(),
+  logBackendServiceResponse: jest.fn(),
 }));
 
-jest.mock('../service/ctccd/creditCardDetailSessionDataService', () => ({
-  CreditCardDetailSessionDataService: jest.fn(() => ({
-    fetchSbDilEligibilityDecision: jest.fn(),
-    saveSbDilEligibilityDecision: jest.fn()
-  }))
-}));
+// Import the necessary modules
+import { EligibilityDecisionService } from '../../service/dcn/eligibilityDecisionService';
+import { CrossAccountAPICache } from '../../common/cross_account/cached_api_information';
+import { ServerError } from '../../util/serverError';
+import { ClientError } from '../../util/clientError';
+import { ApiConstants } from '../../util/constants';
+import { ErrorCodes } from '../../util/errorCodes';
+import { debug, error, info, trace, logBackendServiceError, logBackendServiceRequest, logBackendServiceResponse } from "../../common/utils/logger";
 
-jest.mock('../service/ccar/creditCardArrangementReportService', () => ({
-  CreditCardArrangementReportService: jest.fn(() => ({
-    getCreditCardDetail: jest.fn()
-  }))
-}));
-
-jest.mock('../service/cdbcontext/cdbContextService', () => ({
-  CdbContextService: jest.fn(() => ({
-    getSessionData: jest.fn()
-  }))
-}));
-
-jest.mock('../service/dcn/eligibilityDecisionService', () => ({
-  EligibilityDecisionService: jest.fn(() => ({
-    getDilEligibilityDecision: jest.fn()
-  }))
-}));
-
-jest.mock('../service/util/transientCreditCardDataHelper', () => ({
-  TransientCreditCardDataHelper: {
-    filterCreditCardAccounts: jest.fn(),
-    getCardNumber: jest.fn()
-  }
-}));
-
-jest.mock('../mapper/retailCreditCardAccountDetailResponseMappingHelper', () => ({
-  RetailCreditCardAccountDetailResponseMappingHelper: {
-    findCustomerInfo: jest.fn()
-  }
-}));
-
-// Import the modules
-import { SBDilTransientCreditCardDataService } from '../service/ctccd/SBDilTransientCreditCardDataService.new';
-import { TransientCreditCardDataRequest } from '../model/ctccd/transientCreditCardDataRequest';
-import { CreditCardDetailSessionDataService } from '../service/ctccd/creditCardDetailSessionDataService';
-import { CreditCardArrangementReportService } from '../service/ccar/creditCardArrangementReportService';
-import { CdbContextService } from '../service/cdbcontext/cdbContextService';
-import { EligibilityDecisionService } from '../service/dcn/eligibilityDecisionService';
-import { TransientCreditCardDataHelper } from '../service/util/transientCreditCardDataHelper';
-import { RetailCreditCardAccountDetailResponseMappingHelper as RetailMappingHelper } from '../mapper/retailCreditCardAccountDetailResponseMappingHelper';
-import { SbDilEligibilityDecisionSessionData } from '../model/cardDetail/cardDetailSessionData';
-import { debug, error, info, trace } from '../common/utils/logger';
-
-describe('SBDilTransientCreditCardDataService', () => {
+describe('EligibilityDecisionService', () => {
   // Test constants
-  const mockEcifId = 'test-ecif-id';
-  const mockSessionId = 'test-session-id';
   const mockCorrelationId = 'test-correlation-id';
-  const mockAccountIndex = 1;
-  const mockCardNumber = '1234567890123456';
-  
-  const mockRequestBody: TransientCreditCardDataRequest = { 
-    accountIndex: mockAccountIndex 
-  };
+  const mockLob = 'creditCard';
+  const mockClientProductCode = '123';
+  const mockCustomerType = 'individual';
   
   // Reset mocks before each test
   beforeEach(() => {
     jest.clearAllMocks();
   });
-  
+
   test('should create service instance correctly', () => {
-    // Verify the service can be instantiated with correct parameters
-    const service = new SBDilTransientCreditCardDataService(
-      mockEcifId,
-      mockSessionId,
-      mockRequestBody,
-      mockCorrelationId
-    );
-    
+    // Basic test to verify the service can be instantiated
+    const service = new EligibilityDecisionService(mockCorrelationId);
     expect(service).toBeDefined();
-    expect(CreditCardDetailSessionDataService).toHaveBeenCalledWith(mockCorrelationId);
-    expect(CreditCardArrangementReportService).toHaveBeenCalledWith(mockCorrelationId);
-    expect(CdbContextService).toHaveBeenCalledWith(mockSessionId, mockEcifId, mockCorrelationId);
-    expect(EligibilityDecisionService).toHaveBeenCalledWith(mockCorrelationId);
+    
+    // Verify CrossAccountAPICache was initialized
+    expect(CrossAccountAPICache).toHaveBeenCalledWith(
+      'us-east-1',
+      'us-east-1',
+      'mock-role-arn',
+      'mock-api-key-param',
+      'mock-api-gateway-id',
+      expect.any(Number) // Cache time to live
+    );
   });
-  
-  test('should use session data when available for eligibility decision', async () => {
-    // Mock session data with eligibility info
-    const mockSbDilEligibilityDecisionSessionData = {
-      ecifId: mockEcifId,
-      sessionId: mockSessionId,
-      accountIndex: mockAccountIndex,
-      accountDetail: { 
-        allowInstallmentLending: true 
-      }
+
+  test('should successfully call getDilEligibilityDecision and return eligible response', async () => {
+    // Mock successful API response
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        result: {
+          AllowInstallmentLending: {
+            isEligible: true,
+            reason: 'QUALIFYING_PRODUCT'
+          }
+        }
+      })
     };
     
-    // Setup mock session service
-    const mockCcDetailService = {
-      fetchSbDilEligibilityDecision: jest.fn().mockResolvedValue(mockSbDilEligibilityDecisionSessionData),
-      saveSbDilEligibilityDecision: jest.fn()
-    };
-    
-    (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCcDetailService);
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
     
     // Create service and call method
-    const service = new SBDilTransientCreditCardDataService(
-      mockEcifId,
-      mockSessionId,
-      mockRequestBody,
-      mockCorrelationId
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    const result = await service.getDilEligibilityDecision(
+      mockLob, 
+      mockClientProductCode, 
+      mockCustomerType
     );
-    
-    // Execute method
-    const result = await service.getSbDilEligibility();
     
     // Verify result
     expect(result).toBeDefined();
-    expect(result.statusCode).toBe(200);
-    expect(result.headers['x-request-id']).toBe(mockCorrelationId);
-    expect(result.headers['x-fapi-interaction-id']).toBe(mockCorrelationId);
+    expect(result.result.AllowInstallmentLending.isEligible).toBe(true);
+    expect(result.result.AllowInstallmentLending.reason).toBe('QUALIFYING_PRODUCT');
     
-    // Parse and verify body content
-    const body = JSON.parse(result.body);
-    expect(body.accountDetails.accountDetail.allowInstallmentLending).toBe(true);
-    
-    // Verify session data was used
-    expect(mockCcDetailService.fetchSbDilEligibilityDecision).toHaveBeenCalledWith(mockEcifId, mockSessionId);
-  });
-  
-  test('should fetch card data from backend when session data is not available', async () => {
-    // Setup mocks for all backend services
-    const mockCustomerInfo = {
-      customerType: 'individual'
-    };
-    
-    const mockCreditCardDetailResponse = {
-      lob: 'creditCard',
-      retail: {
-        ingGeneralAcctResponse: {
-          accountGeneralInfo: {
-            clientProductCode: '123'
-          }
-        },
-        inCustInfoResponse: [{ customerType: 'individual' }]
-      }
-    };
-    
-    const mockDecisionResponse = {
-      result: {
-        AllowInstallmentLending: {
-          isEligible: true
-        }
-      }
-    };
-
-    // Setup service mocks
-    const mockCcDetailService = {
-      fetchSbDilEligibilityDecision: jest.fn().mockResolvedValue(null),
-      saveSbDilEligibilityDecision: jest.fn().mockResolvedValue({})
-    };
-    
-    const mockCdbService = {
-      getSessionData: jest.fn().mockResolvedValue({ data: [{ account: 'details' }] })
-    };
-    
-    const mockCcArrangementService = {
-      getCreditCardDetail: jest.fn().mockResolvedValue(mockCreditCardDetailResponse)
-    };
-    
-    const mockDecisionService = {
-      getDilEligibilityDecision: jest.fn().mockResolvedValue(mockDecisionResponse)
-    };
-    
-    // Setup mocks
-    (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCcDetailService);
-    (CdbContextService as jest.Mock).mockImplementation(() => mockCdbService);
-    (CreditCardArrangementReportService as jest.Mock).mockImplementation(() => mockCcArrangementService);
-    (EligibilityDecisionService as jest.Mock).mockImplementation(() => mockDecisionService);
-    (TransientCreditCardDataHelper.filterCreditCardAccounts as jest.Mock).mockReturnValue([{ cardNumber: mockCardNumber }]);
-    (TransientCreditCardDataHelper.getCardNumber as jest.Mock).mockReturnValue(mockCardNumber);
-    (RetailMappingHelper.findCustomerInfo as jest.Mock).mockReturnValue(mockCustomerInfo);
-    
-    // Create service and call method
-    const service = new SBDilTransientCreditCardDataService(
-      mockEcifId,
-      mockSessionId,
-      mockRequestBody,
-      mockCorrelationId
+    // Verify fetch was called with correct parameters
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(ApiConstants.BACKEND_API_ENDPOINTS.DCN_GET_EVALUATION),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+          'x-apigw-api-id': 'mock-api-gateway-id',
+          'x-api-key': 'mock-api-key',
+          'x-request-id': mockCorrelationId,
+          'x-tapi-interaction-id': mockCorrelationId
+        }),
+        body: expect.stringContaining(mockLob)
+      })
     );
     
-    // Execute method
-    const result = await service.getSbDilEligibility();
+    // Verify logging
+    expect(logBackendServiceRequest).toHaveBeenCalled();
+    expect(logBackendServiceResponse).toHaveBeenCalled();
+    expect(info).toHaveBeenCalled();
+    expect(trace).toHaveBeenCalled();
+  });
+
+  test('should successfully call getDilEligibilityDecision and return not eligible response', async () => {
+    // Mock successful API response with not eligible result
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        result: {
+          AllowInstallmentLending: {
+            isEligible: false,
+            reason: 'NON_QUALIFYING_PRODUCT'
+          }
+        }
+      })
+    };
+    
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+    
+    // Create service and call method
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    const result = await service.getDilEligibilityDecision(
+      mockLob, 
+      mockClientProductCode, 
+      mockCustomerType
+    );
     
     // Verify result
     expect(result).toBeDefined();
-    expect(result.statusCode).toBe(200);
-    
-    // Parse and verify body content
-    const body = JSON.parse(result.body);
-    expect(body.accountDetails.accountDetail.allowInstallmentLending).toBe(true);
-    
-    // Verify key service interactions
-    expect(mockCcDetailService.fetchSbDilEligibilityDecision).toHaveBeenCalledWith(mockEcifId, mockSessionId);
-    expect(mockCdbService.getSessionData).toHaveBeenCalled();
-    expect(mockCcArrangementService.getCreditCardDetail).toHaveBeenCalled();
-    expect(mockDecisionService.getDilEligibilityDecision).toHaveBeenCalled();
-    expect(mockCcDetailService.saveSbDilEligibilityDecision).toHaveBeenCalled();
+    expect(result.result.AllowInstallmentLending.isEligible).toBe(false);
+    expect(result.result.AllowInstallmentLending.reason).toBe('NON_QUALIFYING_PRODUCT');
   });
-  
-  test('should handle error when session data service fails', async () => {
-    // Setup mocks
-    const mockCustomerInfo = {
-      customerType: 'individual'
-    };
-    
-    const mockCreditCardDetailResponse = {
-      lob: 'creditCard',
-      retail: {
-        ingGeneralAcctResponse: {
-          accountGeneralInfo: {
-            clientProductCode: '123'
-          }
-        },
-        inCustInfoResponse: [{ customerType: 'individual' }]
-      }
-    };
-    
-    const mockDecisionResponse = {
-      result: {
-        AllowInstallmentLending: {
-          isEligible: true
-        }
-      }
-    };
 
-    // Setup service mocks
-    const mockCcDetailService = {
-      fetchSbDilEligibilityDecision: jest.fn().mockRejectedValue(new Error('Session service error')),
-      saveSbDilEligibilityDecision: jest.fn().mockResolvedValue({})
+  test('should handle non-200 response from API', async () => {
+    // Mock error response
+    const mockErrorResponse = {
+      status: 400,
+      statusText: 'Bad Request',
+      json: jest.fn().mockResolvedValue({
+        errorCode: 'INVALID_REQUEST',
+        errorMessage: 'Invalid request parameters'
+      })
     };
     
-    const mockCdbService = {
-      getSessionData: jest.fn().mockResolvedValue({ data: [{ account: 'details' }] })
+    (fetch as jest.Mock).mockResolvedValueOnce(mockErrorResponse);
+    
+    // Create service
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    
+    // Execute and expect error
+    await expect(service.getDilEligibilityDecision(
+      mockLob, 
+      mockClientProductCode, 
+      mockCustomerType
+    )).rejects.toThrow(ServerError);
+    
+    // Verify error logging
+    expect(error).toHaveBeenCalled();
+    expect(logBackendServiceResponse).toHaveBeenCalled();
+  });
+
+  test('should retry on ClientError and succeed on second attempt', async () => {
+    // First attempt fails with a ClientError
+    (fetch as jest.Mock).mockRejectedValueOnce(new ClientError('Network error', 'NETWORK_ERROR'));
+    
+    // Second attempt succeeds
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        result: {
+          AllowInstallmentLending: {
+            isEligible: true
+          }
+        }
+      })
     };
     
-    const mockCcArrangementService = {
-      getCreditCardDetail: jest.fn().mockResolvedValue(mockCreditCardDetailResponse)
-    };
-    
-    const mockDecisionService = {
-      getDilEligibilityDecision: jest.fn().mockResolvedValue(mockDecisionResponse)
-    };
-    
-    // Setup mocks
-    (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCcDetailService);
-    (CdbContextService as jest.Mock).mockImplementation(() => mockCdbService);
-    (CreditCardArrangementReportService as jest.Mock).mockImplementation(() => mockCcArrangementService);
-    (EligibilityDecisionService as jest.Mock).mockImplementation(() => mockDecisionService);
-    (TransientCreditCardDataHelper.filterCreditCardAccounts as jest.Mock).mockReturnValue([{ cardNumber: mockCardNumber }]);
-    (TransientCreditCardDataHelper.getCardNumber as jest.Mock).mockReturnValue(mockCardNumber);
-    (RetailMappingHelper.findCustomerInfo as jest.Mock).mockReturnValue(mockCustomerInfo);
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
     
     // Create service and call method
-    const service = new SBDilTransientCreditCardDataService(
-      mockEcifId,
-      mockSessionId,
-      mockRequestBody,
-      mockCorrelationId
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    const result = await service.getDilEligibilityDecision(
+      mockLob, 
+      mockClientProductCode, 
+      mockCustomerType
     );
     
-    // Execute method
-    const result = await service.getSbDilEligibility();
-    
-    // Verify service recovered after session service error
+    // Verify result
     expect(result).toBeDefined();
-    expect(result.statusCode).toBe(200);
+    expect(result.result.AllowInstallmentLending.isEligible).toBe(true);
+    
+    // Verify fetch was called twice
+    expect(fetch).toHaveBeenCalledTimes(2);
+    
+    // Verify logging includes retry information
+    expect(debug).toHaveBeenCalledWith(
+      expect.stringContaining('retry count: 0'),
+      mockCorrelationId
+    );
+    expect(logBackendServiceError).toHaveBeenCalled();
+  });
+
+  test('should fail after max retries on ClientError', async () => {
+    // All attempts fail with ClientError
+    (fetch as jest.Mock)
+      .mockRejectedValueOnce(new ClientError('Network error 1', 'NETWORK_ERROR'))
+      .mockRejectedValueOnce(new ClientError('Network error 2', 'NETWORK_ERROR'))
+      .mockRejectedValueOnce(new ClientError('Network error 3', 'NETWORK_ERROR'));
+    
+    // Create service
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    
+    // Execute and expect error
+    await expect(service.getDilEligibilityDecision(
+      mockLob, 
+      mockClientProductCode, 
+      mockCustomerType
+    )).rejects.toThrow(ServerError);
+    
+    // Verify fetch was called maximum times
+    expect(fetch).toHaveBeenCalledTimes(2);
+    
+    // Verify logging includes max retry information
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('service failed after max retries: 2'),
+      expect.any(Object),
+      mockCorrelationId
+    );
+  });
+
+  test('should immediately throw on ServerError without retry', async () => {
+    // Attempt fails with ServerError
+    (fetch as jest.Mock).mockRejectedValueOnce(new ServerError('Server error', 'SERVER_ERROR'));
+    
+    // Create service
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    
+    // Execute and expect error
+    await expect(service.getDilEligibilityDecision(
+      mockLob, 
+      mockClientProductCode, 
+      mockCustomerType
+    )).rejects.toThrow(ServerError);
+    
+    // Verify fetch was called only once (no retry)
+    expect(fetch).toHaveBeenCalledTimes(1);
+    
+    // Verify error was logged
+    expect(logBackendServiceError).toHaveBeenCalled();
+  });
+
+  test('should throw ServerError when CrossAccountAPICache fails', async () => {
+    // Mock CrossAccountAPICache failure
+    jest.resetModules();
+    jest.mock("../../common/cross_account/cached_api_information", () => ({
+      CrossAccountAPICache: jest.fn().mockImplementation(() => {
+        throw new Error('Failed to initialize CrossAccountAPICache');
+      })
+    }));
+    
+    // Import the service again after changing the mock
+    const { EligibilityDecisionService } = require('../../service/dcn/eligibilityDecisionService');
+    
+    // Expect error when creating service
+    expect(() => new EligibilityDecisionService(mockCorrelationId)).toThrow(ServerError);
     
     // Verify error was logged
     expect(error).toHaveBeenCalled();
-    
-    // Verify fallback to backend services
-    expect(mockCdbService.getSessionData).toHaveBeenCalled();
-    expect(mockDecisionService.getDilEligibilityDecision).toHaveBeenCalled();
   });
-  
-  test('should throw ServerError when CDB context service fails', async () => {
-    // Setup service mocks
-    const mockCcDetailService = {
-      fetchSbDilEligibilityDecision: jest.fn().mockResolvedValue(null)
+
+  test('should use correct request payload and decision name', async () => {
+    // Mock successful response
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        result: {
+          AllowInstallmentLending: {
+            isEligible: true
+          }
+        }
+      })
     };
     
-    const mockCdbService = {
-      getSessionData: jest.fn().mockRejectedValue(new Error('CDB service error'))
-    };
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
     
-    // Setup mocks
-    (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCcDetailService);
-    (CdbContextService as jest.Mock).mockImplementation(() => mockCdbService);
-    
-    // Create service
-    const service = new SBDilTransientCreditCardDataService(
-      mockEcifId,
-      mockSessionId,
-      mockRequestBody,
-      mockCorrelationId
+    // Create service and call method
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    await service.getDilEligibilityDecision(
+      mockLob, 
+      mockClientProductCode, 
+      mockCustomerType
     );
     
-    // Execute and expect error
-    await expect(service.getSbDilEligibility()).rejects.toThrow();
-    expect(error).toHaveBeenCalled();
-  });
-  
-  test('should throw ClientError when customer has no credit card accounts', async () => {
-    // Setup service mocks
-    const mockCcDetailService = {
-      fetchSbDilEligibilityDecision: jest.fn().mockResolvedValue(null)
-    };
-    
-    const mockCdbService = {
-      getSessionData: jest.fn().mockResolvedValue({ data: [] })
-    };
-    
-    // Setup mocks
-    (CreditCardDetailSessionDataService as jest.Mock).mockImplementation(() => mockCcDetailService);
-    (CdbContextService as jest.Mock).mockImplementation(() => mockCdbService);
-    (TransientCreditCardDataHelper.filterCreditCardAccounts as jest.Mock).mockReturnValue([]);
-    
-    // Create service
-    const service = new SBDilTransientCreditCardDataService(
-      mockEcifId,
-      mockSessionId,
-      mockRequestBody,
-      mockCorrelationId
+    // Verify request payload contains correct decision name and context
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        body: expect.stringContaining(ApiConstants.DECISION_NAME_INSTALLMENT_LENDING)
+      })
     );
     
-    // Execute and expect error
-    await expect(service.getSbDilEligibility()).rejects.toThrow();
-    expect(error).toHaveBeenCalled();
+    // Extract and parse the request payload
+    const fetchCall = (fetch as jest.Mock).mock.calls[0];
+    const requestInfo = fetchCall[1];
+    const payload = JSON.parse(requestInfo.body);
+    
+    // Verify payload structure
+    expect(payload).toEqual({
+      decisionName: ApiConstants.DECISION_NAME_INSTALLMENT_LENDING,
+      context: {
+        CPC: mockClientProductCode,
+        LOB: mockLob,
+        CustType: mockCustomerType
+      }
+    });
+  });
+
+  test('should include all required headers in the API request', async () => {
+    // Mock successful response
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        result: {
+          AllowInstallmentLending: {
+            isEligible: true
+          }
+        }
+      })
+    };
+    
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+    
+    // Create service and call method
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    await service.getDilEligibilityDecision(
+      mockLob, 
+      mockClientProductCode, 
+      mockCustomerType
+    );
+    
+    // Verify all required headers were included in request
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+          'x-apigw-api-id': 'mock-api-gateway-id',
+          'x-api-key': 'mock-api-key',
+          'x-request-id': mockCorrelationId,
+          'x-tapi-interaction-id': mockCorrelationId,
+          'x-app-cat-id': ApiConstants.APP_CAT_ID,
+          'x-client-id': ApiConstants.APP_CAT_ID,
+          'x-fapi-financial-id': ApiConstants.API_FINANCIAL_ID
+        })
+      })
+    );
+  });
+
+  test('should handle empty or null inputs appropriately', async () => {
+    // Mock successful response
+    const mockResponse = {
+      status: 200,
+      statusText: 'OK',
+      json: jest.fn().mockResolvedValue({
+        result: {
+          AllowInstallmentLending: {
+            isEligible: false
+          }
+        }
+      })
+    };
+    
+    (fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+    
+    // Create service and call method with empty/null inputs
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    await service.getDilEligibilityDecision('', null, undefined);
+    
+    // Extract and parse the request payload
+    const fetchCall = (fetch as jest.Mock).mock.calls[0];
+    const requestInfo = fetchCall[1];
+    const payload = JSON.parse(requestInfo.body);
+    
+    // Verify payload contains empty/null values as expected
+    expect(payload.context).toEqual({
+      CPC: null,
+      LOB: '',
+      CustType: undefined
+    });
   });
 });
