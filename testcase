@@ -135,6 +135,16 @@ jest.mock("../src/util/errorCodes", () => ({
     }
 }));
 
+// Mock ServerError
+jest.mock("../src/util/ServerError", () => ({
+    ServerError: class ServerError extends Error {
+        constructor(message, code) {
+            super(message);
+            this.code = code;
+        }
+    }
+}));
+
 describe("CreditCardDetailSessionDataService", () => {
     let service: CreditCardDetailSessionDataService;
     const mockCorrelationId = "test-correlation-id";
@@ -164,11 +174,14 @@ describe("CreditCardDetailSessionDataService", () => {
 
     describe("fetchCardDetails", () => {
         it("should handle empty response", async () => {
+            // Mock returning empty Items array
             mockSendFunction.mockResolvedValueOnce({ Items: [] });
+            
             const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+            
             expect(result).toBeUndefined();
             expect(mockError).toHaveBeenCalledWith(
-                "CreditCardDetailSessionDataService - No items returned while fetching the credit card detail from temporary storage: TCCD-1032",
+                `CreditCardDetailSessionDataService - No items returned while fetching the credit card detail from temporary storage: ${ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorCode}`,
                 undefined,
                 mockCorrelationId
             );
@@ -177,35 +190,51 @@ describe("CreditCardDetailSessionDataService", () => {
         it("should handle DynamoDB error", async () => {
             const dbError = new Error("DynamoDB error");
             mockSendFunction.mockRejectedValueOnce(dbError);
+            
             await expect(service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex))
                 .rejects.toThrow(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+            
             expect(mockError).toHaveBeenCalledWith(
-                "CreditCardDetailSessionDataService - " + ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage,
+                "CreditCardDetailSessionDataService - FETCH_CARD_DTL_TEMP_STORAGE_ERROR",
                 dbError,
                 mockCorrelationId
             );
         });
 
         it("should handle null response", async () => {
+            // Mock returning null
             mockSendFunction.mockResolvedValueOnce(null);
+            
             const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+            
             expect(result).toBeUndefined();
             expect(mockError).toHaveBeenCalledWith(
-                "CreditCardDetailSessionDataService - No items returned while fetching the credit card detail from temporary storage: TCCD-1032",
+                `CreditCardDetailSessionDataService - No items returned while fetching the credit card detail from temporary storage: ${ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorCode}`,
                 undefined,
                 mockCorrelationId
             );
         });
 
         it("should handle unexpected error while fetching credit card details", async () => {
-            mockSendFunction.mockImplementationOnce(() => {
-                throw new Error("Unexpected error");
+            // Set up a mock that will cause an unexpected error during processing
+            mockSendFunction.mockResolvedValueOnce({ 
+                Items: [{ 
+                    ecifId: mockEcifId,
+                    transientCreditCardId: mockTransientCreditCardId,
+                    accountIndex: mockAccountIndex,
+                    sessionId: mockSessionId,
+                    // Invalid JSON to cause parsing error
+                    accountDetail: "{invalid-json",
+                    ccarCustomerDetail: "{}",
+                    ccarCardDetail: "{}" 
+                }] 
             });
             
             await expect(service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex))
                 .rejects.toThrow(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+            
             expect(mockError).toHaveBeenCalledWith(
-                expect.stringContaining("CreditCardDetailSessionDataService - FETCH_CARD_DTL_TEMP_STORAGE_ERROR"),
+                "CreditCardDetailSessionDataService - Unexpected error while fetching the credit card detail from temporary storage",
                 expect.any(Error),
                 mockCorrelationId
             );
@@ -217,9 +246,9 @@ describe("CreditCardDetailSessionDataService", () => {
                 transientCreditCardId: mockTransientCreditCardId,
                 accountIndex: mockAccountIndex,
                 sessionId: mockSessionId,
-                accountDetail: JSON.stringify({}),
-                ccarCustomerDetail: JSON.stringify({}),
-                ccarCardDetail: JSON.stringify({}),
+                accountDetail: "{}",
+                ccarCustomerDetail: "{}",
+                ccarCardDetail: "{}",
                 ttl: Math.floor(Date.now() / 1000) + 30 * 60
             };
             
@@ -238,9 +267,9 @@ describe("CreditCardDetailSessionDataService", () => {
                 transientCreditCardId: mockTransientCreditCardId,
                 accountIndex: mockAccountIndex,
                 sessionId: mockSessionId,
-                accountDetail: JSON.stringify({}),
-                ccarCustomerDetail: JSON.stringify({}),
-                ccarCardDetail: JSON.stringify({}),
+                accountDetail: "{}",
+                ccarCustomerDetail: "{}",
+                ccarCardDetail: "{}",
                 ttl: Math.floor(Date.now() / 1000) - 60 // Expired timestamp
             };
             
@@ -269,7 +298,7 @@ describe("CreditCardDetailSessionDataService", () => {
                 .rejects.toThrow(ErrorCodes.SAVE_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
             
             expect(mockError).toHaveBeenCalledWith(
-                expect.stringContaining("CreditCardDetailSessionDataService - SAVE_CARD_DTL_TEMP_STORAGE_ERROR"),
+                "CreditCardDetailSessionDataService - SAVE_CARD_DTL_TEMP_STORAGE_ERROR",
                 dbError,
                 mockCorrelationId
             );
