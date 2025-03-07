@@ -122,6 +122,50 @@ jest.mock("../src/service/util/dynamoDbClient", () => ({
 }));
 
 describe("CreditCardDetailSessionDataService", () => {
+    // Test the constructor and class setup
+    describe("constructor", () => {
+        it("should initialize with the proper table name from environment variable", () => {
+            process.env.CC_DETAIL_DB_TABLE_NAME = "custom-table-name";
+            const serviceInstance = new CreditCardDetailSessionDataService(mockCorrelationId);
+            
+            // Create a PutCommand to check what table name gets used
+            serviceInstance.saveCardDetails(mockCardDetails);
+            
+            // Verify PutCommand was called with the correct table name
+            expect(PutCommand).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    TableName: "custom-table-name"
+                })
+            );
+        });
+        
+        it("should use an empty string for table name if environment variable is not set", () => {
+            // Delete the environment variable
+            delete process.env.CC_DETAIL_DB_TABLE_NAME;
+            
+            const serviceInstance = new CreditCardDetailSessionDataService(mockCorrelationId);
+            
+            // Create a PutCommand to check what table name gets used
+            serviceInstance.saveCardDetails(mockCardDetails);
+            
+            // Verify PutCommand was called with an empty table name
+            expect(PutCommand).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    TableName: ""
+                })
+            );
+            
+            // Reset environment variable for other tests
+            process.env.CC_DETAIL_DB_TABLE_NAME = "test-table";
+        });
+        
+        it("should get an instance of DynamoDBAPIClient with the provided correlation ID", () => {
+            new CreditCardDetailSessionDataService("custom-correlation-id");
+            
+            // Verify DynamoDBAPIClient.getInstance was called with the correct correlation ID
+            expect(DynamoDBAPIClient.getInstance).toHaveBeenCalledWith("custom-correlation-id");
+        });
+    });
     let service: CreditCardDetailSessionDataService;
     const mockCorrelationId = "test-correlation-id";
     const mockEcifId = "test-ecif";
@@ -136,6 +180,45 @@ describe("CreditCardDetailSessionDataService", () => {
         accountDetail: {},
         ccarCustomerDetail: {},
         ccarCardDetail: {}
+    };
+    
+    // Additional mock data with various data formats
+    const mockCardDetailsWithoutTransientId = {
+        ecifId: mockEcifId,
+        accountIndex: mockAccountIndex,
+        sessionId: mockSessionId,
+        accountDetail: { accountNumber: "123456789" },
+        ccarCustomerDetail: { customerName: "Test User" },
+        ccarCardDetail: { cardType: "Credit" }
+    };
+    
+    const mockCardDetailsWithComplexData = {
+        ecifId: mockEcifId,
+        transientCreditCardId: mockTransientCreditCardId,
+        accountIndex: mockAccountIndex,
+        sessionId: mockSessionId,
+        accountDetail: { 
+            accountNumber: "123456789",
+            balance: 1000.50,
+            isActive: true,
+            lastPaymentDate: "2024-01-15"
+        },
+        ccarCustomerDetail: { 
+            customerName: "Test User",
+            address: {
+                street: "123 Main St",
+                city: "Anytown",
+                state: "CA",
+                zip: "12345"
+            },
+            contactNumbers: ["555-1234", "555-5678"] 
+        },
+        ccarCardDetail: { 
+            cardType: "Credit",
+            expiryDate: "12/28",
+            lastFourDigits: "1234",
+            creditLimit: 10000
+        }
     };
 
     beforeEach(() => {
@@ -223,6 +306,103 @@ describe("CreditCardDetailSessionDataService", () => {
             const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
             expect(result).toBeUndefined();
         });
+        
+        it("should handle malformed JSON in stored data", async () => {
+            const mockData = {
+                ecifId: mockEcifId,
+                transientCreditCardId: mockTransientCreditCardId,
+                accountIndex: mockAccountIndex,
+                sessionId: mockSessionId,
+                accountDetail: "{invalid-json",  // Invalid JSON
+                ccarCustomerDetail: JSON.stringify({}),
+                ccarCardDetail: JSON.stringify({})
+            };
+            
+            mockSendFunction.mockResolvedValueOnce({ Items: [mockData] });
+            
+            await expect(service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex))
+                .rejects.toThrow();
+                
+            expect(mockError).toHaveBeenCalled();
+        });
+        
+        it("should construct the query with correct parameters", async () => {
+            mockSendFunction.mockResolvedValueOnce({ Items: [] });
+            await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+            
+            // Check that QueryCommand was constructed properly
+            expect(QueryCommand).toHaveBeenCalledWith({
+                TableName: "test-table",
+                KeyConditionExpression: "ecifId = :ecifId AND transientCreditCardId = :transientCreditCardId",
+                ExpressionAttributeValues: {
+                    ":ecifId": mockEcifId,
+                    ":transientCreditCardId": `${mockSessionId}_${mockAccountIndex}`,
+                },
+                ConsistentRead: true,
+            });
+        });
+        
+        it("should successfully parse complex nested objects", async () => {
+            const complexData = {
+                accountDetail: {
+                    accountNumber: "123456789",
+                    balance: 1000.50,
+                    isActive: true
+                },
+                ccarCustomerDetail: {
+                    customerName: "Test User",
+                    address: {
+                        street: "123 Main St",
+                        city: "Anytown"
+                    }
+                },
+                ccarCardDetail: {
+                    cardType: "Credit",
+                    lastFourDigits: "1234"
+                }
+            };
+            
+            const mockData = {
+                ecifId: mockEcifId,
+                transientCreditCardId: mockTransientCreditCardId,
+                accountIndex: mockAccountIndex,
+                sessionId: mockSessionId,
+                accountDetail: JSON.stringify(complexData.accountDetail),
+                ccarCustomerDetail: JSON.stringify(complexData.ccarCustomerDetail),
+                ccarCardDetail: JSON.stringify(complexData.ccarCardDetail),
+                ttl: Math.floor(Date.now() / 1000) + 3600
+            };
+            
+            mockSendFunction.mockResolvedValueOnce({ Items: [mockData] });
+            
+            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+            
+            expect(result).toBeDefined();
+            expect(result?.accountDetail).toEqual(complexData.accountDetail);
+            expect(result?.ccarCustomerDetail).toEqual(complexData.ccarCustomerDetail);
+            expect(result?.ccarCardDetail).toEqual(complexData.ccarCardDetail);
+        });
+        
+        it("should measure and log execution time", async () => {
+            // Mock the performance.now function
+            const originalPerformanceNow = performance.now;
+            performance.now = jest.fn()
+                .mockReturnValueOnce(1000)  // First call - start time
+                .mockReturnValueOnce(1500); // Second call - end time
+            
+            mockSendFunction.mockResolvedValueOnce({ Items: [] });
+            
+            await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+            
+            // Verify console.info was called with execution time
+            expect(console.info).toHaveBeenCalledWith(
+                expect.stringContaining("fetchCardDetails from DB completed in 500 ms"),
+                mockCorrelationId
+            );
+            
+            // Restore original performance.now
+            performance.now = originalPerformanceNow;
+        });
     });
     
     describe("saveCardDetails", () => {
@@ -240,6 +420,64 @@ describe("CreditCardDetailSessionDataService", () => {
                 .rejects.toThrow();
                 
             expect(mockError).toHaveBeenCalled();
+        });
+        
+        it("should generate transientCreditCardId when not provided", async () => {
+            mockSendFunction.mockResolvedValueOnce({});
+            await service.saveCardDetails(mockCardDetailsWithoutTransientId);
+            
+            // Check that the send function was called
+            expect(mockSendFunction).toHaveBeenCalledTimes(1);
+            
+            // Extract the PutCommand that was passed to send
+            const putCommand = mockSendFunction.mock.calls[0][0];
+            
+            // Verify that a transientCreditCardId was generated in the expected format
+            expect(putCommand.input.Item.transientCreditCardId).toBe(`${mockSessionId}_${mockAccountIndex}`);
+        });
+        
+        it("should correctly handle complex nested objects by stringifying them", async () => {
+            mockSendFunction.mockResolvedValueOnce({});
+            await service.saveCardDetails(mockCardDetailsWithComplexData);
+            
+            // Extract the PutCommand that was passed to send
+            const putCommand = mockSendFunction.mock.calls[0][0];
+            
+            // Check that complex objects were properly stringified
+            expect(typeof putCommand.input.Item.accountDetail).toBe("string");
+            expect(typeof putCommand.input.Item.ccarCustomerDetail).toBe("string");
+            expect(typeof putCommand.input.Item.ccarCardDetail).toBe("string");
+            
+            // Parse the stringified data to verify it contains the expected values
+            const parsedAccountDetail = JSON.parse(putCommand.input.Item.accountDetail);
+            expect(parsedAccountDetail.accountNumber).toBe("123456789");
+            expect(parsedAccountDetail.balance).toBe(1000.50);
+            
+            const parsedCustomerDetail = JSON.parse(putCommand.input.Item.ccarCustomerDetail);
+            expect(parsedCustomerDetail.customerName).toBe("Test User");
+            expect(parsedCustomerDetail.address.city).toBe("Anytown");
+        });
+        
+        it("should set TTL value correctly when saving data", async () => {
+            // Save the current Date.now implementation
+            const originalDateNow = Date.now;
+            
+            // Mock Date.now to return a fixed timestamp
+            const fixedTimestamp = 1609459200000; // 2021-01-01T00:00:00.000Z
+            global.Date.now = jest.fn(() => fixedTimestamp);
+            
+            mockSendFunction.mockResolvedValueOnce({});
+            await service.saveCardDetails(mockCardDetails);
+            
+            // Extract the PutCommand that was passed to send
+            const putCommand = mockSendFunction.mock.calls[0][0];
+            
+            // Check that TTL was set correctly (current time + 30 minutes)
+            const expectedTTL = Math.floor(fixedTimestamp / 1000) + 30 * 60;
+            expect(putCommand.input.Item.ttl).toBe(expectedTTL);
+            
+            // Restore the original Date.now
+            global.Date.now = originalDateNow;
         });
     });
 });
