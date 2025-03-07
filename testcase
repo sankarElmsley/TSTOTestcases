@@ -58,11 +58,36 @@ export default {
 
 -----------------------------------------------------------------
 
-// Mock required modules
-jest.mock("../../common/cross_account/cached_api_information");
-jest.mock("../../common/utils/logger");
+// Mock CrossAccountAPICache - note the capital 'V' in Value
+const mockApiValue = {
+  apiGatewayId: 'mock-api-gateway-id',
+  apiKey: 'mock-api-key'
+};
 
-// Mock fetch
+// Create a global apiInfoCache variable that matches what's in the service file
+global.apiInfoCache = {
+  Value: jest.fn().mockResolvedValue(mockApiValue) // Capital 'V' to match the real method
+};
+
+// Mock the actual module
+jest.mock("../../common/cross_account/cached_api_information", () => {
+  return {
+    CrossAccountAPICache: jest.fn().mockImplementation(() => global.apiInfoCache)
+  };
+});
+
+// Mock logger functions
+jest.mock("../../common/utils/logger", () => ({
+  debug: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  trace: jest.fn(),
+  logBackendServiceError: jest.fn(),
+  logBackendServiceRequest: jest.fn(),
+  logBackendServiceResponse: jest.fn(),
+}));
+
+// Mock fetch API
 global.fetch = jest.fn();
 
 // Mock performance API
@@ -72,6 +97,7 @@ global.performance = {
 
 // Mock environment variables
 process.env = {
+  ...process.env,
   CROSS_REGION: 'us-east-1',
   REGION: 'us-east-1',
   CROSS_ACCOUNT_ROLE_FOR_DCN: 'mock-role-arn',
@@ -80,11 +106,9 @@ process.env = {
   GET_ELIGIBILITY_DECISION_URL: 'https://mock-api-gateway-id.execute-api.us-east-1.amazonaws.com',
 };
 
-// Import the necessary modules
+// Import modules
 import { EligibilityDecisionService } from '../../service/dcn/eligibilityDecisionService';
-import { CrossAccountAPICache } from '../../common/cross_account/cached_api_information';
-import { ClientError } from '../../util/clientError';
-import * as logger from "../../common/utils/logger";
+import { debug, error, info, trace, logBackendServiceRequest, logBackendServiceResponse } from "../../common/utils/logger";
 
 describe('EligibilityDecisionService', () => {
   // Test constants
@@ -97,35 +121,17 @@ describe('EligibilityDecisionService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     
-    // Set up CrossAccountAPICache mock implementation
-    const mockApiInfo = {
-      apiGatewayId: 'mock-api-gateway-id',
-      apiKey: 'mock-api-key'
-    };
-    
-    // Mock constructor
-    (CrossAccountAPICache as jest.Mock).mockImplementation(function() {
-      return {
-        value: jest.fn().mockResolvedValue(mockApiInfo)
-      };
-    });
-    
-    // Mock logger methods to avoid implementation errors
-    Object.keys(logger).forEach(key => {
-      if (typeof logger[key] === 'function') {
-        jest.spyOn(logger, key).mockImplementation(() => {});
-      }
-    });
+    // Reset the apiInfoCache mock response for each test - with capital 'V'
+    global.apiInfoCache.Value.mockResolvedValue(mockApiValue);
   });
 
   test('should create service instance', () => {
-    // Simple test to verify the service can be instantiated
     const service = new EligibilityDecisionService(mockCorrelationId);
     expect(service).toBeDefined();
   });
 
-  test('should call getDilEligibilityDecision method', async () => {
-    // Mock successful response
+  test('should handle successful API response', async () => {
+    // Mock a successful fetch response
     const mockResponse = {
       status: 200,
       statusText: 'OK',
@@ -138,98 +144,52 @@ describe('EligibilityDecisionService', () => {
       })
     };
     
-    // Setup fetch mock
+    // Set up the fetch mock
     (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
     
-    // Create service
+    // Create service instance
     const service = new EligibilityDecisionService(mockCorrelationId);
     
-    try {
-      // Call the method
-      const result = await service.getDilEligibilityDecision(
-        mockLob, 
-        mockClientProductCode, 
-        mockCustomerType
-      );
-      
-      // Verify fetch was called
-      expect(global.fetch).toHaveBeenCalled();
-      
-      // Verify json method was called
-      expect(mockResponse.json).toHaveBeenCalled();
-      
-      // Basic result verification
-      expect(result).toBeDefined();
-    } catch (error) {
-      console.error('Test error:', error);
-      throw error; // Re-throw the error to fail the test
-    }
+    // Call the method we're testing
+    const result = await service.getDilEligibilityDecision(
+      mockLob,
+      mockClientProductCode,
+      mockCustomerType
+    );
+    
+    // Basic verification
+    expect(result).toBeDefined();
+    expect(result.result.AllowInstallmentLending.isEligible).toBe(true);
+    
+    // Verify fetch was called
+    expect(global.fetch).toHaveBeenCalled();
+    
+    // Verify that the json method was called
+    expect(mockResponse.json).toHaveBeenCalled();
   });
 
-  // Test for API error response - wrapped in a try/catch to debug any issues
-  test('should handle API error response', async () => {
-    try {
-      // Mock error response
-      const mockErrorResponse = {
-        status: 400,
-        statusText: 'Bad Request',
-        json: jest.fn().mockResolvedValue({
-          error: 'Bad Request'
-        })
-      };
-      
-      // Setup fetch mock
-      (global.fetch as jest.Mock).mockResolvedValue(mockErrorResponse);
-      
-      // Create service
-      const service = new EligibilityDecisionService(mockCorrelationId);
-      
-      // Use a try/catch to handle the rejection properly
-      try {
-        await service.getDilEligibilityDecision(
-          mockLob, 
-          mockClientProductCode, 
-          mockCustomerType
-        );
-        // If we get here, the test should fail
-        throw new Error('Expected method to throw, but it did not');
-      } catch (error) {
-        // This is expected - the method should throw
-        expect(global.fetch).toHaveBeenCalled();
-      }
-    } catch (testError) {
-      console.error('Test infrastructure error:', testError);
-      throw testError;
-    }
-  });
-
-  // Test for network error - wrapped in a try/catch to debug any issues
-  test('should handle network error', async () => {
-    try {
-      // Setup fetch to throw an error
-      (global.fetch as jest.Mock).mockRejectedValue(
-        new ClientError('Network error', 'NETWORK_ERROR')
-      );
-      
-      // Create service
-      const service = new EligibilityDecisionService(mockCorrelationId);
-      
-      // Use a try/catch to handle the rejection properly
-      try {
-        await service.getDilEligibilityDecision(
-          mockLob, 
-          mockClientProductCode, 
-          mockCustomerType
-        );
-        // If we get here, the test should fail
-        throw new Error('Expected method to throw, but it did not');
-      } catch (error) {
-        // This is expected - the method should throw
-        expect(global.fetch).toHaveBeenCalled();
-      }
-    } catch (testError) {
-      console.error('Test infrastructure error:', testError);
-      throw testError;
-    }
+  test('should handle error response from API', async () => {
+    // Mock an error response
+    const mockErrorResponse = {
+      status: 400,
+      statusText: 'Bad Request',
+      json: jest.fn().mockResolvedValue({
+        error: 'Bad Request'
+      })
+    };
+    
+    // Set up the fetch mock
+    (global.fetch as jest.Mock).mockResolvedValue(mockErrorResponse);
+    
+    // Create service instance
+    const service = new EligibilityDecisionService(mockCorrelationId);
+    
+    // Call the method and expect it to throw
+    await expect(
+      service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType)
+    ).rejects.toThrow();
+    
+    // Verify fetch was called
+    expect(global.fetch).toHaveBeenCalled();
   });
 });
