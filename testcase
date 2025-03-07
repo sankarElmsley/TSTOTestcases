@@ -58,138 +58,221 @@ export default {
 
 -----------------------------------------------------------------
 
-// Mock CrossAccountAPICache - note the capital 'V' in Value
-const mockApiValue = {
-  apiGatewayId: 'mock-api-gateway-id',
-  apiKey: 'mock-api-key'
-};
+import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import CreditCardDetailSessionDataService from "../src/service/ctccd/creditCardDetailSessionDataService";
+import { CardDetailSessionData } from "../src/model/cardDetail/cardDetailSessionData";
+import { ErrorCodes } from "../src/util/errorCodes";
+import { DynamoDBAPIClient } from "../src/service/util/dynamoDbClient";
+import { ServerError } from "../src/util/ServerError";
+import { TransientCreditCardDataHelper } from "../src/service/util/transientCreditCardDataHelper";
 
-// Create a global apiInfoCache variable that matches what's in the service file
-global.apiInfoCache = {
-  Value: jest.fn().mockResolvedValue(mockApiValue) // Capital 'V' to match the real method
-};
-
-// Mock the actual module
-jest.mock("../../common/cross_account/cached_api_information", () => {
-  return {
-    CrossAccountAPICache: jest.fn().mockImplementation(() => global.apiInfoCache)
-  };
-});
+// Mock error logger function
+const mockError = jest.fn();
 
 // Mock logger functions
-jest.mock("../../common/utils/logger", () => ({
-  debug: jest.fn(),
-  error: jest.fn(),
-  info: jest.fn(),
-  trace: jest.fn(),
-  logBackendServiceError: jest.fn(),
-  logBackendServiceRequest: jest.fn(),
-  logBackendServiceResponse: jest.fn(),
+jest.mock("../common/utils/logger", () => ({
+    debug: jest.fn(),
+    debugWithSanitize: jest.fn(),
+    error: jest.fn().mockImplementation((...args) => mockError(...args)),
+    trace: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    logBackendServiceRequest: jest.fn(),
+    logBackendServiceError: jest.fn(),
+    logBackendServiceResponse: jest.fn()
 }));
 
-// Mock fetch API
-global.fetch = jest.fn();
+// Mock console functions since they're used in the implementation
+global.console.trace = jest.fn();
+global.console.debug = jest.fn();
+global.console.error = jest.fn();
+global.console.info = jest.fn();
+global.console.warn = jest.fn();
 
-// Mock performance API
-global.performance = {
-  now: jest.fn().mockReturnValue(1000)
-};
+// Mock AWS SDK utilities
+jest.mock("@aws-sdk/util-dynamodb", () => ({
+    marshall: jest.fn().mockImplementation(input => input),
+    unmarshall: jest.fn().mockImplementation(input => input)
+}));
 
-// Mock environment variables
-process.env = {
-  ...process.env,
-  CROSS_REGION: 'us-east-1',
-  REGION: 'us-east-1',
-  CROSS_ACCOUNT_ROLE_FOR_DCN: 'mock-role-arn',
-  SSM_PARAM_DCN_API_KEY: 'mock-api-key-param',
-  SSM_PARAM_DCN_GATEWAY_HOST: 'mock-api-gateway-id.execute-api.us-east-1.amazonaws.com',
-  GET_ELIGIBILITY_DECISION_URL: 'https://mock-api-gateway-id.execute-api.us-east-1.amazonaws.com',
-};
+// Mock AWS DynamoDB commands
+jest.mock("@aws-sdk/lib-dynamodb", () => ({
+    PutCommand: jest.fn().mockImplementation(params => ({ input: params })),
+    QueryCommand: jest.fn().mockImplementation(params => ({ input: params }))
+}));
 
-// Import modules
-import { EligibilityDecisionService } from '../../service/dcn/eligibilityDecisionService';
-import { debug, error, info, trace, logBackendServiceRequest, logBackendServiceResponse } from "../../common/utils/logger";
+// Mock TransientCreditCardDataHelper
+jest.mock("../src/service/util/transientCreditCardDataHelper", () => ({
+    TransientCreditCardDataHelper: {
+        isDateExpired: jest.fn().mockReturnValue(false)
+    }
+}));
 
-describe('EligibilityDecisionService', () => {
-  // Test constants
-  const mockCorrelationId = 'test-correlation-id';
-  const mockLob = 'creditCard';
-  const mockClientProductCode = '123';
-  const mockCustomerType = 'individual';
-  
-  // Reset mocks before each test
-  beforeEach(() => {
-    jest.clearAllMocks();
-    
-    // Reset the apiInfoCache mock response for each test - with capital 'V'
-    global.apiInfoCache.Value.mockResolvedValue(mockApiValue);
-  });
+// Mock DynamoDBAPIClient
+const mockSendFunction = jest.fn();
+jest.mock("../src/service/util/dynamoDbClient", () => ({
+    DynamoDBAPIClient: {
+        getInstance: jest.fn().mockImplementation(() => ({
+            dbDocumentClient: {
+                send: mockSendFunction
+            }
+        }))
+    }
+}));
 
-  test('should create service instance', () => {
-    const service = new EligibilityDecisionService(mockCorrelationId);
-    expect(service).toBeDefined();
-  });
-
-  test('should handle successful API response', async () => {
-    // Mock a successful fetch response
-    const mockResponse = {
-      status: 200,
-      statusText: 'OK',
-      json: jest.fn().mockResolvedValue({
-        result: {
-          AllowInstallmentLending: {
-            isEligible: true
-          }
+// Mock ErrorCodes
+jest.mock("../src/util/errorCodes", () => ({
+    ErrorCodes: {
+        FETCH_CARD_DTL_TEMP_STORAGE_ERROR: {
+            errorMessage: "Error fetching card details from temporary storage",
+            errorCode: "TCCD-1032"
+        },
+        SAVE_CARD_DTL_TEMP_STORAGE_ERROR: {
+            errorMessage: "Error saving card details to temporary storage",
+            errorCode: "TCCD-1031"
         }
-      })
-    };
-    
-    // Set up the fetch mock
-    (global.fetch as jest.Mock).mockResolvedValue(mockResponse);
-    
-    // Create service instance
-    const service = new EligibilityDecisionService(mockCorrelationId);
-    
-    // Call the method we're testing
-    const result = await service.getDilEligibilityDecision(
-      mockLob,
-      mockClientProductCode,
-      mockCustomerType
-    );
-    
-    // Basic verification
-    expect(result).toBeDefined();
-    expect(result.result.AllowInstallmentLending.isEligible).toBe(true);
-    
-    // Verify fetch was called
-    expect(global.fetch).toHaveBeenCalled();
-    
-    // Verify that the json method was called
-    expect(mockResponse.json).toHaveBeenCalled();
-  });
+    }
+}));
 
-  test('should handle error response from API', async () => {
-    // Mock an error response
-    const mockErrorResponse = {
-      status: 400,
-      statusText: 'Bad Request',
-      json: jest.fn().mockResolvedValue({
-        error: 'Bad Request'
-      })
+describe("CreditCardDetailSessionDataService", () => {
+    let service: CreditCardDetailSessionDataService;
+    const mockCorrelationId = "test-correlation-id";
+    const mockEcifId = "test-ecif";
+    const mockSessionId = "test-session";
+    const mockAccountIndex = 1;
+    const mockTransientCreditCardId = `${mockSessionId}_${mockAccountIndex}`;
+    const mockCardDetails = {
+        ecifId: mockEcifId,
+        transientCreditCardId: mockTransientCreditCardId,
+        accountIndex: mockAccountIndex,
+        sessionId: mockSessionId,
+        accountDetail: {},
+        ccarCustomerDetail: {},
+        ccarCardDetail: {}
     };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        process.env.CC_DETAIL_DB_TABLE_NAME = "test-table";
+        service = new CreditCardDetailSessionDataService(mockCorrelationId);
+    });
+
+    afterEach(() => {
+        jest.clearAllMocks();
+    });
+
+    describe("fetchCardDetails", () => {
+        it("should handle empty response", async () => {
+            mockSendFunction.mockResolvedValueOnce({ Items: [] });
+            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+            expect(result).toBeUndefined();
+            expect(mockError).toHaveBeenCalledWith(
+                "CreditCardDetailSessionDataService - No items returned while fetching the credit card detail from temporary storage: TCCD-1032",
+                undefined,
+                mockCorrelationId
+            );
+        });
+
+        it("should handle DynamoDB error", async () => {
+            const dbError = new Error("DynamoDB error");
+            mockSendFunction.mockRejectedValueOnce(dbError);
+            await expect(service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex))
+                .rejects.toThrow(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+            expect(mockError).toHaveBeenCalledWith(
+                "CreditCardDetailSessionDataService - " + ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage,
+                dbError,
+                mockCorrelationId
+            );
+        });
+
+        it("should handle null response", async () => {
+            mockSendFunction.mockResolvedValueOnce(null);
+            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+            expect(result).toBeUndefined();
+            expect(mockError).toHaveBeenCalledWith(
+                "CreditCardDetailSessionDataService - No items returned while fetching the credit card detail from temporary storage: TCCD-1032",
+                undefined,
+                mockCorrelationId
+            );
+        });
+
+        it("should handle unexpected error while fetching credit card details", async () => {
+            mockSendFunction.mockImplementationOnce(() => {
+                throw new Error("Unexpected error");
+            });
+            
+            await expect(service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex))
+                .rejects.toThrow(ErrorCodes.FETCH_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+            expect(mockError).toHaveBeenCalledWith(
+                expect.stringContaining("CreditCardDetailSessionDataService - FETCH_CARD_DTL_TEMP_STORAGE_ERROR"),
+                expect.any(Error),
+                mockCorrelationId
+            );
+        });
+
+        it("should successfully fetch credit card details", async () => {
+            const mockData = {
+                ecifId: mockEcifId,
+                transientCreditCardId: mockTransientCreditCardId,
+                accountIndex: mockAccountIndex,
+                sessionId: mockSessionId,
+                accountDetail: JSON.stringify({}),
+                ccarCustomerDetail: JSON.stringify({}),
+                ccarCardDetail: JSON.stringify({}),
+                ttl: Math.floor(Date.now() / 1000) + 30 * 60
+            };
+            
+            mockSendFunction.mockResolvedValueOnce({ Items: [mockData] });
+            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+            
+            expect(result).toBeDefined();
+            expect(result?.ecifId).toBe(mockEcifId);
+            expect(result?.transientCreditCardId).toBe(mockTransientCreditCardId);
+            expect(result?.accountIndex).toBe(mockAccountIndex);
+        });
+        
+        it("should return undefined if data is expired", async () => {
+            const mockData = {
+                ecifId: mockEcifId,
+                transientCreditCardId: mockTransientCreditCardId,
+                accountIndex: mockAccountIndex,
+                sessionId: mockSessionId,
+                accountDetail: JSON.stringify({}),
+                ccarCustomerDetail: JSON.stringify({}),
+                ccarCardDetail: JSON.stringify({}),
+                ttl: Math.floor(Date.now() / 1000) - 60 // Expired timestamp
+            };
+            
+            mockSendFunction.mockResolvedValueOnce({ Items: [mockData] });
+            
+            // Mock isDateExpired to return true (meaning it's expired)
+            (TransientCreditCardDataHelper.isDateExpired as jest.Mock).mockReturnValueOnce(true);
+            
+            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
+            expect(result).toBeUndefined();
+        });
+    });
     
-    // Set up the fetch mock
-    (global.fetch as jest.Mock).mockResolvedValue(mockErrorResponse);
-    
-    // Create service instance
-    const service = new EligibilityDecisionService(mockCorrelationId);
-    
-    // Call the method and expect it to throw
-    await expect(
-      service.getDilEligibilityDecision(mockLob, mockClientProductCode, mockCustomerType)
-    ).rejects.toThrow();
-    
-    // Verify fetch was called
-    expect(global.fetch).toHaveBeenCalled();
-  });
+    describe("saveCardDetails", () => {
+        it("should successfully save card details", async () => {
+            mockSendFunction.mockResolvedValueOnce({});
+            await service.saveCardDetails(mockCardDetails);
+            expect(mockSendFunction).toHaveBeenCalledTimes(1);
+        });
+        
+        it("should handle error when saving card details", async () => {
+            const dbError = new Error("DynamoDB error");
+            mockSendFunction.mockRejectedValueOnce(dbError);
+            
+            await expect(service.saveCardDetails(mockCardDetails))
+                .rejects.toThrow(ErrorCodes.SAVE_CARD_DTL_TEMP_STORAGE_ERROR.errorMessage);
+            
+            expect(mockError).toHaveBeenCalledWith(
+                expect.stringContaining("CreditCardDetailSessionDataService - SAVE_CARD_DTL_TEMP_STORAGE_ERROR"),
+                dbError,
+                mockCorrelationId
+            );
+        });
+    });
 });
