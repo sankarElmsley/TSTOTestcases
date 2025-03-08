@@ -103,7 +103,7 @@ jest.mock("../../../src/service/util/transientCreditCardDataHelper", () => ({
   }
 }));
 
-// Mock RetailMappingHelper functions
+// Mock RetailMappingHelper functions including isCCBalanceProtectionAge
 jest.mock("../../../src/service/mapper/retailCreditCardAccountDetailResponseMappingHelper", () => ({
   RetailCreditCardAccountDetailResponseMappingHelper: {
     findCustomerInfo: jest.fn().mockReturnValue({
@@ -126,7 +126,8 @@ jest.mock("../../../src/service/mapper/retailCreditCardAccountDetailResponseMapp
       currentMonth: "2024-03",
       previousMonth: "2024-02"
     }),
-    getTransferRate: jest.fn().mockReturnValue(22.99)
+    getTransferRate: jest.fn().mockReturnValue(22.99),
+    isCCBalanceProtectionAge: jest.fn().mockReturnValue(false)
   }
 }));
 
@@ -142,9 +143,6 @@ describe("CreditCardAccountDetailMapper", () => {
     cardType: "Credit",
     productName: "Test Card"
   };
-
-  // Simplify our tests by mocking getAvailableCredit
-  jest.spyOn(CreditCardAccountDetailMapper, 'getAvailableCredit').mockReturnValue(5000);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -163,7 +161,6 @@ describe("CreditCardAccountDetailMapper", () => {
       );
 
       // Assert
-      expect(result).toBeDefined();
       expect(result.accountNumber).toBe(creditCardDetailResponse.cardNumber);
       expect(result.tsys).toBe(creditCardDetailResponse.owningSystem === 'T');
     });
@@ -186,14 +183,32 @@ describe("CreditCardAccountDetailMapper", () => {
       expect(result).toBeDefined();
       expect(result.availableCredit).toBe(availableCredit);
     });
+    
+    it("should successfully map all required fields in the account detail", () => {
+      // Act
+      const result = CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
+        cardNumber,
+        creditCardDetailResponse,
+        customerDetailResponse,
+        correlationId,
+        mockBin
+      );
+
+      // Assert - verify all required fields are mapped
+      expect(result).toBeDefined();
+      expect(result.accountNumber).toBeDefined();
+      expect(result.cardHolderName).toBeDefined();
+      expect(result.cardHolderType).toBe(ApiConstants.CARD_HOLDER_TYPE_OWNER);
+      expect(result.creditLimit).toBeDefined();
+      expect(result.currentBalance).toBeDefined();
+      expect(result.primaryCard).toBe(true);
+      expect(result.additionalSecondaryCards).toEqual([]);
+      expect(result.ownerInd).toBe(ApiConstants.OWNER_IND_RETAIL);
+      expect(result.allowInstallmentLending).toBe(true);
+    });
   });
 
   describe("getAvailableCredit", () => {
-    // Restore original implementation for this test section
-    beforeEach(() => {
-      jest.spyOn(CreditCardAccountDetailMapper, 'getAvailableCredit').mockRestore();
-    });
-
     it("should return correct available credit when response is provided", () => {
       // Arrange
       const mockResponse = {
