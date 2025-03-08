@@ -58,396 +58,166 @@ export default {
 
 -----------------------------------------------------------------
 
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import CreditCardDetailSessionDataService from "../src/service/ctccd/creditCardDetailSessionDataService";
-import { CardDetailSessionData } from "../src/model/cardDetail/cardDetailSessionData";
-import { ErrorCodes } from "../src/util/errorCodes";
-import DynamoDBAPIClient from "../src/service/util/dynamoDbClient";
-import { ServerError } from "../src/util/ServerError";
-import { TransientCreditCardDataHelper } from "../src/service/util/transientCreditCardDataHelper";
+import { CustomerInfo } from "../../../src/model/ccar/getAccountDetailResponse";
+import { AccountDetail } from "../../../src/model/ctccd/transientCreditCardDataResponse";
+import { CreditCardAccountDetailMapper } from "../../../src/service/mapper/creditCardAccountDetailMapper";
+import { RetailCreditCardAccountDetailResponseMappingHelper as RetailMappingHelper } from "../../../src/service/mapper/retailCreditCardAccountDetailResponseMappingHelper";
+import { TransientCreditCardDataHelper } from "../../../src/service/util/transientCreditCardDataHelper";
+import { ApiConstants } from "../../../src/util/constants";
+import {
+  creditcardDetailResponse as retailCreditCardDetailResponse,
+  customerDetailResponse as retailCustomerDetailResponse
+} from "../../resources/ccar/CCAR_RESPONSE.json";
+import { CCU_RESPONSE_200 } from "../../resources/ccu/CCU_RESPONSE.json";
 
-// Mock error logger function
-const mockError = jest.fn();
-
-// Mock logger functions
-jest.mock("../common/utils/logger", () => ({
-    debug: jest.fn(),
-    debugWithSanitize: jest.fn(),
-    error: jest.fn().mockImplementation((...args) => mockError(...args)),
-    trace: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    logBackendServiceRequest: jest.fn(),
-    logBackendServiceError: jest.fn(),
-    logBackendServiceResponse: jest.fn()
+// Mock all the required functions
+jest.mock("../../../../common/utils/logger", () => ({
+  debug: jest.fn(),
+  debugWithSanitize: jest.fn(),
+  infoWithSanitize: jest.fn(),
+  error: jest.fn(),
+  info: jest.fn(),
+  trace: jest.fn(),
+  logBackendServiceRequest: jest.fn(),
+  logBackendServiceError: jest.fn(),
+  logBackendServiceResponse: jest.fn()
 }));
 
-// Mock console functions since they're used in the implementation
+// Mock console functions
 global.console.trace = jest.fn();
 global.console.debug = jest.fn();
 global.console.error = jest.fn();
 global.console.info = jest.fn();
 global.console.warn = jest.fn();
 
-// Mock AWS SDK utilities
-jest.mock("@aws-sdk/util-dynamodb", () => ({
-    marshall: jest.fn().mockImplementation(input => input),
-    unmarshall: jest.fn().mockImplementation(input => input)
+// Mock TransientCreditCardDataHelper.getMatchedBIN
+jest.mock("../../../src/service/util/transientCreditCardDataHelper", () => ({
+  TransientCreditCardDataHelper: {
+    getMatchedBIN: jest.fn().mockReturnValue({
+      binRangeStart: "552489",
+      binRangeEnd: "552489",
+      cardBrand: "Mastercard",
+      cardType: "Credit",
+      productName: "Test Card"
+    })
+  }
 }));
 
-// Mock AWS DynamoDB commands
-jest.mock("@aws-sdk/lib-dynamodb", () => ({
-    PutCommand: jest.fn().mockImplementation(params => ({ input: params })),
-    QueryCommand: jest.fn().mockImplementation(params => ({ input: params }))
+// Mock RetailMappingHelper functions
+jest.mock("../../../src/service/mapper/retailCreditCardAccountDetailResponseMappingHelper", () => ({
+  RetailCreditCardAccountDetailResponseMappingHelper: {
+    findCustomerInfo: jest.fn().mockReturnValue({
+      cardNum: "5524890000109322",
+      customerName: "Test User"
+    }),
+    isPrimaryCard: jest.fn().mockReturnValue(true),
+    getAdditionalSecondaryCards: jest.fn().mockReturnValue([]),
+    getCardHolderName: jest.fn().mockReturnValue("Test User"),
+    isCardNotActivated: jest.fn().mockReturnValue(false),
+    getCashAdvanceRate: jest.fn().mockReturnValue(21.99),
+    isCardDeactivatedAndReissued: jest.fn().mockReturnValue(false),
+    isCardDeactivatedAndNotReissued: jest.fn().mockReturnValue(false),
+    isPrepaidCard: jest.fn().mockReturnValue(false),
+    getLoyaltyEligibility: jest.fn().mockReturnValue(true),
+    getProductCode: jest.fn().mockReturnValue("MCWE"),
+    getPurchaseRate: jest.fn().mockReturnValue(19.99),
+    getRewardType: jest.fn().mockReturnValue("AIR_MILES"),
+    getLatestStatementDates: jest.fn().mockReturnValue({
+      currentMonth: "2024-03",
+      previousMonth: "2024-02"
+    }),
+    getTransferRate: jest.fn().mockReturnValue(22.99)
+  }
 }));
 
-// Mock TransientCreditCardDataHelper
-jest.mock("../src/service/util/transientCreditCardDataHelper", () => ({
-    TransientCreditCardDataHelper: {
-        isDateExpired: jest.fn().mockReturnValue(false)
-    }
-}));
+describe("CreditCardAccountDetailMapper", () => {
+  const cardNumber = "5524890000109322";
+  const creditCardDetailResponse = retailCreditCardDetailResponse;
+  const customerDetailResponse = retailCustomerDetailResponse;
+  const correlationId = "asd-asd-234-23sd-as32-as";
+  const mockBin = {
+    binRangeStart: "552489",
+    binRangeEnd: "552489",
+    cardBrand: "Mastercard",
+    cardType: "Credit",
+    productName: "Test Card"
+  };
 
-// Mock DynamoDBAPIClient
-const mockSendFunction = jest.fn();
-jest.mock("../src/service/util/dynamoDbClient", () => ({
-    DynamoDBAPIClient: {
-        getInstance: jest.fn().mockImplementation(() => ({
-            dbDocumentClient: {
-                send: mockSendFunction
-            }
-        }))
-    }
-}));
+  // Simplify our tests by mocking getAvailableCredit
+  jest.spyOn(CreditCardAccountDetailMapper, 'getAvailableCredit').mockReturnValue(5000);
 
-describe("CreditCardDetailSessionDataService", () => {
-    // Test the constructor and class setup
-    describe("constructor", () => {
-        it("should initialize with the proper table name from environment variable", () => {
-            process.env.CC_DETAIL_DB_TABLE_NAME = "custom-table-name";
-            const serviceInstance = new CreditCardDetailSessionDataService(mockCorrelationId);
-            
-            // We can't easily test the private tableName property directly
-            // Just verify the instance was created successfully
-            expect(serviceInstance).toBeDefined();
-        });
-        
-        it("should use an empty string for table name if environment variable is not set", () => {
-            // Delete the environment variable
-            delete process.env.CC_DETAIL_DB_TABLE_NAME;
-            
-            const serviceInstance = new CreditCardDetailSessionDataService(mockCorrelationId);
-            
-            // Just verify the instance was created successfully
-            expect(serviceInstance).toBeDefined();
-            
-            // Reset environment variable for other tests
-            process.env.CC_DETAIL_DB_TABLE_NAME = "test-table";
-        });
-        
-        it("should get an instance of DynamoDBAPIClient with the provided correlation ID", () => {
-            new CreditCardDetailSessionDataService("custom-correlation-id");
-            
-            // Verify DynamoDBAPIClient.getInstance was called
-            expect(DynamoDBAPIClient.getInstance).toHaveBeenCalled();
-        });
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe("mapRetailCreditCardAccountDetail", () => {
+    it("should map retail credit card account detail correctly with undefined availableCredit", () => {
+      // Act
+      const result = CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
+        cardNumber,
+        creditCardDetailResponse,
+        customerDetailResponse,
+        correlationId,
+        mockBin,
+        undefined
+      );
+
+      // Assert
+      expect(result).toBeDefined();
+      expect(result.accountNumber).toBe(creditCardDetailResponse.cardNumber);
+      expect(result.tsys).toBe(creditCardDetailResponse.owningSystem === 'T');
     });
-    let service: CreditCardDetailSessionDataService;
-    const mockCorrelationId = "test-correlation-id";
-    const mockEcifId = "test-ecif";
-    const mockSessionId = "test-session";
-    const mockAccountIndex = 1;
-    const mockTransientCreditCardId = `${mockSessionId}_${mockAccountIndex}`;
-    const mockCardDetails = {
-        ecifId: mockEcifId,
-        transientCreditCardId: mockTransientCreditCardId,
-        accountIndex: mockAccountIndex,
-        sessionId: mockSessionId,
-        accountDetail: {},
-        ccarCustomerDetail: {},
-        ccarCardDetail: {}
-    };
-    
-    // Additional mock data with various data formats
-    const mockCardDetailsWithoutTransientId = {
-        ecifId: mockEcifId,
-        accountIndex: mockAccountIndex,
-        sessionId: mockSessionId,
-        accountDetail: { accountNumber: "123456789" },
-        ccarCustomerDetail: { customerName: "Test User" },
-        ccarCardDetail: { cardType: "Credit" }
-    };
-    
-    const mockCardDetailsWithComplexData = {
-        ecifId: mockEcifId,
-        transientCreditCardId: mockTransientCreditCardId,
-        accountIndex: mockAccountIndex,
-        sessionId: mockSessionId,
-        accountDetail: { 
-            accountNumber: "123456789",
-            balance: 1000.50,
-            isActive: true,
-            lastPaymentDate: "2024-01-15"
-        },
-        ccarCustomerDetail: { 
-            customerName: "Test User",
-            address: {
-                street: "123 Main St",
-                city: "Anytown",
-                state: "CA",
-                zip: "12345"
-            },
-            contactNumbers: ["555-1234", "555-5678"] 
-        },
-        ccarCardDetail: { 
-            cardType: "Credit",
-            expiryDate: "12/28",
-            lastFourDigits: "1234",
-            creditLimit: 10000
-        }
-    };
 
+    it("should map retail credit card account detail correctly with provided availableCredit", () => {
+      // Arrange
+      const availableCredit = 1200.45;
+
+      // Act
+      const result = CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
+        cardNumber,
+        creditCardDetailResponse,
+        customerDetailResponse,
+        correlationId,
+        mockBin,
+        availableCredit
+      );
+
+      // Assert
+      expect(result).toBeDefined();
+      expect(result.availableCredit).toBe(availableCredit);
+    });
+  });
+
+  describe("getAvailableCredit", () => {
+    // Restore original implementation for this test section
     beforeEach(() => {
-        jest.clearAllMocks();
-        process.env.CC_DETAIL_DB_TABLE_NAME = "test-table";
-        service = new CreditCardDetailSessionDataService(mockCorrelationId);
+      jest.spyOn(CreditCardAccountDetailMapper, 'getAvailableCredit').mockRestore();
     });
 
-    afterEach(() => {
-        jest.clearAllMocks();
+    it("should return correct available credit when response is provided", () => {
+      // Arrange
+      const mockResponse = {
+        realTimeAuthorizationInfo: {
+          available: {
+            monetaryAmountOfCreditAvailable: { value: 10000 },
+            monetaryAmountOfCreditAvailablePad: { value: 3000 }
+          }
+        }
+      };
+
+      // Act
+      const result = CreditCardAccountDetailMapper.getAvailableCredit(mockResponse as any);
+
+      // Assert
+      expect(result).toBe(7000);
     });
 
-    describe("fetchCardDetails", () => {
-        it("should handle empty response", async () => {
-            mockSendFunction.mockResolvedValueOnce({ Items: [] });
-            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
-            expect(result).toBeUndefined();
-            expect(mockError).toHaveBeenCalled();
-        });
+    it("should return 0 when response is undefined", () => {
+      // Act
+      const result = CreditCardAccountDetailMapper.getAvailableCredit(undefined);
 
-        it("should handle DynamoDB error", async () => {
-            const dbError = new Error("DynamoDB error");
-            mockSendFunction.mockRejectedValueOnce(dbError);
-            
-            await expect(service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex))
-                .rejects.toThrow();
-                
-            expect(mockError).toHaveBeenCalled();
-        });
-
-        it("should handle null response", async () => {
-            mockSendFunction.mockResolvedValueOnce(null);
-            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
-            expect(result).toBeUndefined();
-            expect(mockError).toHaveBeenCalled();
-        });
-
-        it("should handle unexpected error while fetching credit card details", async () => {
-            mockSendFunction.mockImplementation(() => {
-                throw new Error("Unexpected error");
-            });
-            
-            await expect(service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex))
-                .rejects.toThrow();
-                
-            expect(mockError).toHaveBeenCalled();
-        });
-
-        it("should successfully fetch credit card details", async () => {
-            const mockData = {
-                ecifId: mockEcifId,
-                transientCreditCardId: mockTransientCreditCardId,
-                accountIndex: mockAccountIndex,
-                sessionId: mockSessionId,
-                accountDetail: JSON.stringify({}),
-                ccarCustomerDetail: JSON.stringify({}),
-                ccarCardDetail: JSON.stringify({}),
-                ttl: Math.floor(Date.now() / 1000) + 30 * 60
-            };
-            
-            mockSendFunction.mockResolvedValueOnce({ Items: [mockData] });
-            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
-            
-            expect(result).toBeDefined();
-            expect(result?.ecifId).toBe(mockEcifId);
-        });
-        
-        it("should return undefined if data is expired", async () => {
-            const mockData = {
-                ecifId: mockEcifId,
-                transientCreditCardId: mockTransientCreditCardId,
-                accountIndex: mockAccountIndex,
-                sessionId: mockSessionId,
-                accountDetail: JSON.stringify({}),
-                ccarCustomerDetail: JSON.stringify({}),
-                ccarCardDetail: JSON.stringify({}),
-                ttl: Math.floor(Date.now() / 1000) - 60 // Expired timestamp
-            };
-            
-            mockSendFunction.mockResolvedValueOnce({ Items: [mockData] });
-            
-            // Mock isDateExpired to return true (meaning it's expired)
-            (TransientCreditCardDataHelper.isDateExpired as jest.Mock).mockReturnValueOnce(true);
-            
-            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
-            expect(result).toBeUndefined();
-        });
-        
-        it("should handle malformed JSON in stored data", async () => {
-            const mockData = {
-                ecifId: mockEcifId,
-                transientCreditCardId: mockTransientCreditCardId,
-                accountIndex: mockAccountIndex,
-                sessionId: mockSessionId,
-                accountDetail: "{invalid-json",  // Invalid JSON
-                ccarCustomerDetail: JSON.stringify({}),
-                ccarCardDetail: JSON.stringify({})
-            };
-            
-            mockSendFunction.mockResolvedValueOnce({ Items: [mockData] });
-            
-            await expect(service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex))
-                .rejects.toThrow();
-                
-            expect(mockError).toHaveBeenCalled();
-        });
-        
-        it("should construct the query with correct parameters", async () => {
-            mockSendFunction.mockResolvedValueOnce({ Items: [] });
-            await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
-            
-            // Check that QueryCommand was called
-            expect(QueryCommand).toHaveBeenCalled();
-        });
-        
-        it("should successfully parse complex nested objects", async () => {
-            const complexData = {
-                accountDetail: {
-                    accountNumber: "123456789",
-                    balance: 1000.50,
-                    isActive: true
-                },
-                ccarCustomerDetail: {
-                    customerName: "Test User",
-                    address: {
-                        street: "123 Main St",
-                        city: "Anytown"
-                    }
-                },
-                ccarCardDetail: {
-                    cardType: "Credit",
-                    lastFourDigits: "1234"
-                }
-            };
-            
-            const mockData = {
-                ecifId: mockEcifId,
-                transientCreditCardId: mockTransientCreditCardId,
-                accountIndex: mockAccountIndex,
-                sessionId: mockSessionId,
-                accountDetail: JSON.stringify(complexData.accountDetail),
-                ccarCustomerDetail: JSON.stringify(complexData.ccarCustomerDetail),
-                ccarCardDetail: JSON.stringify(complexData.ccarCardDetail),
-                ttl: Math.floor(Date.now() / 1000) + 3600
-            };
-            
-            mockSendFunction.mockResolvedValueOnce({ Items: [mockData] });
-            
-            const result = await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
-            
-            expect(result).toBeDefined();
-            expect(result?.accountDetail).toEqual(complexData.accountDetail);
-            expect(result?.ccarCustomerDetail).toEqual(complexData.ccarCustomerDetail);
-            expect(result?.ccarCardDetail).toEqual(complexData.ccarCardDetail);
-        });
-        
-        it("should measure and log execution time", async () => {
-            // Mock the performance.now function
-            const originalPerformanceNow = performance.now;
-            performance.now = jest.fn()
-                .mockReturnValueOnce(1000)  // First call - start time
-                .mockReturnValueOnce(1500); // Second call - end time
-            
-            mockSendFunction.mockResolvedValueOnce({ Items: [] });
-            
-            await service.fetchCardDetails(mockEcifId, mockSessionId, mockAccountIndex);
-            
-            // Verify console.info was called
-            expect(console.info).toHaveBeenCalled();
-            
-            // Restore original performance.now
-            performance.now = originalPerformanceNow;
-        });
+      // Assert
+      expect(result).toBe(0);
     });
-    
-    describe("saveCardDetails", () => {
-        it("should successfully save card details", async () => {
-            mockSendFunction.mockResolvedValueOnce({});
-            await service.saveCardDetails(mockCardDetails);
-            expect(mockSendFunction).toHaveBeenCalledTimes(1);
-        });
-        
-        it("should handle error when saving card details", async () => {
-            const dbError = new Error("DynamoDB error");
-            mockSendFunction.mockRejectedValueOnce(dbError);
-            
-            await expect(service.saveCardDetails(mockCardDetails))
-                .rejects.toThrow();
-                
-            expect(mockError).toHaveBeenCalled();
-        });
-        
-        it("should generate transientCreditCardId when not provided", async () => {
-            mockSendFunction.mockResolvedValueOnce({});
-            await service.saveCardDetails(mockCardDetailsWithoutTransientId);
-            
-            // Check that the send function was called
-            expect(mockSendFunction).toHaveBeenCalled();
-        });
-        
-        it("should correctly handle complex nested objects by stringifying them", async () => {
-            mockSendFunction.mockResolvedValueOnce({});
-            await service.saveCardDetails(mockCardDetailsWithComplexData);
-            
-            // Extract the PutCommand that was passed to send
-            const putCommand = mockSendFunction.mock.calls[0][0];
-            
-            // Check that complex objects were properly stringified
-            expect(typeof putCommand.input.Item.accountDetail).toBe("string");
-            expect(typeof putCommand.input.Item.ccarCustomerDetail).toBe("string");
-            expect(typeof putCommand.input.Item.ccarCardDetail).toBe("string");
-            
-            // Parse the stringified data to verify it contains the expected values
-            const parsedAccountDetail = JSON.parse(putCommand.input.Item.accountDetail);
-            expect(parsedAccountDetail.accountNumber).toBe("123456789");
-            expect(parsedAccountDetail.balance).toBe(1000.50);
-            
-            const parsedCustomerDetail = JSON.parse(putCommand.input.Item.ccarCustomerDetail);
-            expect(parsedCustomerDetail.customerName).toBe("Test User");
-            expect(parsedCustomerDetail.address.city).toBe("Anytown");
-        });
-        
-        it("should set TTL value correctly when saving data", async () => {
-            // Save the current Date.now implementation
-            const originalDateNow = Date.now;
-            
-            // Mock Date.now to return a fixed timestamp
-            const fixedTimestamp = 1609459200000; // 2021-01-01T00:00:00.000Z
-            global.Date.now = jest.fn(() => fixedTimestamp);
-            
-            mockSendFunction.mockResolvedValueOnce({});
-            await service.saveCardDetails(mockCardDetails);
-            
-            // Extract the PutCommand that was passed to send
-            const putCommand = mockSendFunction.mock.calls[0][0];
-            
-            // Check that TTL was set correctly (current time + 30 minutes)
-            const expectedTTL = Math.floor(fixedTimestamp / 1000) + 30 * 60;
-            expect(putCommand.input.Item.ttl).toBe(expectedTTL);
-            
-            // Restore the original Date.now
-            global.Date.now = originalDateNow;
-        });
-    });
+  });
 });
