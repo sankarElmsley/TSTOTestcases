@@ -58,14 +58,10 @@ export default {
 
 -----------------------------------------------------------------
 
-The system was attempting to access account details via the API endpoint:
-/channels-ms-api-accinfo/account/v1/accountsdetails
-This API call involved:
+POST request to /identityManagement/consent/v1/consentcontent was processed
+The endpoint successfully called an external service at https://cqsq-in-sit4.bmoqc.net:8106/esbapi/party/bmopartyconsent
+The external service responded with a 200 OK status
+However, the response data did not contain the expected "purpose" data
+The service code at line 174 identified this missing data and threw the exception
 
-First making a call to retrieve debit card information from https://api2-sit2.bmogc.net/api/customer-access-entitlement/debit-card/full-report/get
-Then making a call to retrieve credit card information from https://api2-sit2.bmogc.net/api/credit-charge-card/credit-card-arrangement-report/get
-
-
-Looking at the credit card report API call, the system was trying to retrieve data for the following segments: IAS, ICI, ICL, ICY, IGA, IGB, IRA, IRW, ITA, and ITD for card number ending in 2485 (full number: 7719C5165660000192485)
-The TSYS credit card system responded with multiple "Unknown Account" errors for this card number across all requested segments, with error code GBL-906.
-When the ObjectMapperService.processCCTsysAccounts method tried to process these credit card account responses at line 535, it encountered a NullPointerException because it was not handling the "Unknown Account" error condition properly.
+This is a data-related issue where the system expected to find purpose data in the external API response but didn't receive it. Instead of handling this gracefully as a potential valid case, the code threw a business exception which propagated to the user as a 500 error.
