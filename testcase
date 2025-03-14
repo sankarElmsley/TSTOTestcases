@@ -90,28 +90,18 @@ constructor(ecifId: string, ocifId: string, sessionId: string, requestBody: Tran
 }
 
 // Add method to determine DIL eligibility - no caching, direct call to API
-private async getDilEligibilityDecision(cardNumber: string): Promise<boolean> {
+private async getDilEligibilityDecision(cardNumber: string, creditcardDetailResponse: CreditCardAccountDetailResponse): Promise<boolean> {
     console.trace(
         TransientCreditcardDataService.LOG_PREFIX.concat("In getDilEligibilityDecision..."),
         this.correlationId
     );
     
-    if (!this.creditCardDetailResponse) {
-        console.warn(
-            TransientCreditcardDataService.LOG_PREFIX.concat(
-                "Credit card details not available, cannot determine DIL eligibility"
-            ),
-            this.correlationId
-        );
-        return false;
-    }
-    
     try {
-        const lineOfBusiness = this.creditCardDetailResponse?.lob ?? '';
-        const clientProductCode = this.creditCardDetailResponse?.retail?.inqGeneralAcctResponse?.accountGeneralInfo?.clientProductCode ?? '';
+        const lineOfBusiness = creditcardDetailResponse?.lob ?? '';
+        const clientProductCode = creditcardDetailResponse?.retail?.inqGeneralAcctResponse?.accountGeneralInfo?.clientProductCode ?? '';
         const customerInfo = RetailMappingHelper.findCustomerInfo(
             cardNumber, 
-            this.creditCardDetailResponse?.retail?.inqCustInfoResponse
+            creditcardDetailResponse?.retail?.inqCustInfoResponse
         );
         
         console.debug(
@@ -186,10 +176,52 @@ private async retrieveCardDetails(cardNumber: string): Promise<void> {
             this.correlationId
         );
 
-        // ... existing code to retrieve card details ...
+        let cardDetailSessionData: any;
         
-        // After credit card details are retrieved, get DIL eligibility
-        this.dilEligibilityDecision = await this.getDilEligibilityDecision(cardNumber);
+        // Try to get the card details from session first
+        try {
+            cardDetailSessionData = await this.creditCardDetailSessionDataService.fetchCardDetails(
+                this.ecifId,
+                this.sessionId,
+                this.accountIndex
+            );
+        } catch (e) {
+            console.error(
+                TransientCreditcardDataService.LOG_PREFIX.concat(
+                    "Error while fetching CardDetails from the Session"
+                ),
+                e,
+                this.correlationId
+            );
+        }
+        
+        // If we have cached details including DIL eligibility, use that
+        if (cardDetailSessionData && 
+            cardDetailSessionData.accountDetail && 
+            cardDetailSessionData.accountDetail.allowInstallmentLending !== undefined) {
+            console.info(
+                TransientCreditcardDataService.LOG_PREFIX.concat(
+                    "DIL eligibility found in session cache: ", 
+                    cardDetailSessionData.accountDetail.allowInstallmentLending ? 'true' : 'false'
+                ),
+                this.correlationId
+            );
+            this.dilEligibilityDecision = cardDetailSessionData.accountDetail.allowInstallmentLending;
+        } 
+        // Otherwise try to determine eligibility using the credit card details
+        else if (this.creditCardDetailResponse) {
+            this.dilEligibilityDecision = await this.getDilEligibilityDecision(cardNumber, this.creditCardDetailResponse);
+        } 
+        // If neither session data nor credit card details are available, use default value
+        else {
+            console.warn(
+                TransientCreditcardDataService.LOG_PREFIX.concat(
+                    "Neither cached data nor credit card details are available. Using default DIL eligibility value (false)."
+                ),
+                this.correlationId
+            );
+            this.dilEligibilityDecision = false;
+        }
         
         console.trace(
             TransientCreditcardDataService.LOG_PREFIX.concat("Out retrieveCardDetails."),
