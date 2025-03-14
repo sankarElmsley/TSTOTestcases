@@ -60,10 +60,9 @@ export default {
 
 // Add these imports to TransientCreditcardDataService.ts
 import { EligibilityDecisionService } from "../dcn/eligibilityDecisionService";
-import { SbDilEligibilityDecisionSessionData } from "../model/cardDetail/cardDetailSessionData";
 import { RetailCreditCardAccountDetailResponseMappingHelper as RetailMappingHelper } from "../mapper/retailCreditCardAccountDetailResponseMappingHelper";
 
-// In the TransientCreditcardDataService class, add:
+// In the TransientCreditcardDataService class:
 private readonly decisionService: EligibilityDecisionService;
 private dilEligibilityDecision: boolean = false;
 
@@ -90,42 +89,13 @@ constructor(ecifId: string, ocifId: string, sessionId: string, requestBody: Tran
     this.promoOfferCipoResponse = [];
 }
 
-// Add method to get DIL eligibility with session caching
-private async getDilEligibility(cardNumber: string): Promise<boolean> {
+// Add method to determine DIL eligibility - no caching, direct call to API
+private async getDilEligibilityDecision(cardNumber: string): Promise<boolean> {
     console.trace(
-        TransientCreditcardDataService.LOG_PREFIX.concat("In getDilEligibility..."),
+        TransientCreditcardDataService.LOG_PREFIX.concat("In getDilEligibilityDecision..."),
         this.correlationId
     );
     
-    // Try to get from session cache first
-    try {
-        const sbDilEligibilityDecisionSessionData = await this.creditCardDetailSessionDataService.fetchSbDilEligibilityDecision(
-            this.ecifId, 
-            this.sessionId
-        );
-        
-        if (sbDilEligibilityDecisionSessionData && 
-            sbDilEligibilityDecisionSessionData.accountIndex === this.accountIndex) {
-            console.info(
-                TransientCreditcardDataService.LOG_PREFIX.concat(
-                    "DIL eligibility found in session cache: ", 
-                    sbDilEligibilityDecisionSessionData.allowInstallmentLending ? 'true' : 'false'
-                ),
-                this.correlationId
-            );
-            return sbDilEligibilityDecisionSessionData.allowInstallmentLending;
-        }
-    } catch (e) {
-        console.error(
-            TransientCreditcardDataService.LOG_PREFIX.concat(
-                "Error fetching DIL eligibility from session, will fetch from API"
-            ),
-            e,
-            this.correlationId
-        );
-    }
-    
-    // If not in cache, determine eligibility from API
     if (!this.creditCardDetailResponse) {
         console.warn(
             TransientCreditcardDataService.LOG_PREFIX.concat(
@@ -179,9 +149,6 @@ private async getDilEligibility(cardNumber: string): Promise<boolean> {
             
             const eligibilityDecision = decisionApiResponse?.result?.AllowInstallmentLending?.isEligible ?? false;
             
-            // Cache the result
-            await this.cacheDilEligibilityDecision(eligibilityDecision);
-            
             console.debug(
                 TransientCreditcardDataService.LOG_PREFIX.concat(
                     "dilEligibilityDecision: ", eligibilityDecision ? 'true' : 'false'
@@ -202,45 +169,14 @@ private async getDilEligibility(cardNumber: string): Promise<boolean> {
     }
     
     console.trace(
-        TransientCreditcardDataService.LOG_PREFIX.concat("Out getDilEligibility."),
+        TransientCreditcardDataService.LOG_PREFIX.concat("Out getDilEligibilityDecision."),
         this.correlationId
     );
     
     return false;
 }
 
-// Add method to cache DIL eligibility decision
-private async cacheDilEligibilityDecision(dilEligibilityDecision: boolean): Promise<void> {
-    console.trace(
-        TransientCreditcardDataService.LOG_PREFIX.concat("In cacheDilEligibilityDecision..."),
-        this.correlationId
-    );
-    
-    const cachePayload: SbDilEligibilityDecisionSessionData = {
-        ecifId: this.ecifId,
-        sessionId: this.sessionId,
-        accountIndex: this.accountIndex,
-        allowInstallmentLending: dilEligibilityDecision
-    };
-    
-    try {
-        await this.creditCardDetailSessionDataService.saveSbDilEligibilityDecision(cachePayload);
-    } catch (e) {
-        console.debug(
-            TransientCreditcardDataService.LOG_PREFIX.concat(
-                "Problem with caching DIL decision."
-            ),
-            this.correlationId
-        );
-    }
-    
-    console.trace(
-        TransientCreditcardDataService.LOG_PREFIX.concat("Out cacheDilEligibilityDecision."),
-        this.correlationId
-    );
-}
-
-// Modify retrieveCardDetails to call getDilEligibility
+// Modify retrieveCardDetails to determine DIL eligibility
 private async retrieveCardDetails(cardNumber: string): Promise<void> {
     try {
         console.trace(
@@ -250,10 +186,10 @@ private async retrieveCardDetails(cardNumber: string): Promise<void> {
             this.correlationId
         );
 
-        // ... existing code ...
+        // ... existing code to retrieve card details ...
         
         // After credit card details are retrieved, get DIL eligibility
-        this.dilEligibilityDecision = await this.getDilEligibility(cardNumber);
+        this.dilEligibilityDecision = await this.getDilEligibilityDecision(cardNumber);
         
         console.trace(
             TransientCreditcardDataService.LOG_PREFIX.concat("Out retrieveCardDetails."),
@@ -290,7 +226,7 @@ private async formatAndSaveAccountDetail(
                     accountDetail: transientCreditCardAccountDetail
                 };
             } else {
-                // Pass DIL eligibility to the mapper
+                // Create a new account detail with DIL eligibility
                 transientCreditCardAccountDetail =
                     CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
                         cardNumber,
@@ -328,8 +264,58 @@ private async formatAndSaveAccountDetail(
     return transientCreditCardAccountDetails;
 }
 
-// Modify CreditCardAccountDetailMapper to accept dilEligibility
-// This would go in CreditCardAccountDetailMapper.ts
+// Modify storeCardDetails to ensure DIL eligibility is stored with card details
+private async storeCardDetails(
+    accountDetail: AccountDetail,
+    ccarCardDetailResponse: CreditCardAccountDetailResponse,
+    ccarCustomerDetailResponse: CustomerDetailsResponse
+): Promise<void> {
+    console.trace(
+        TransientCreditcardDataService.LOG_PREFIX.concat("In storeCardDetails..."),
+        this.correlationId
+    );
+
+    // Ensure DIL eligibility is set in the account detail
+    accountDetail.allowInstallmentLending = this.dilEligibilityDecision;
+    
+    let retryCardDetailSessionDataStorageCount = 0;
+    let retryRequired = true;
+
+    while (retryCardDetailSessionDataStorageCount < 2 && retryRequired) {
+        try {
+            let cardDetailsPayload: CardDetailSessionData = {
+                ecifId: this.ecifId,
+                sessionId: this.sessionId,
+                accountIndex: this.accountIndex,
+                transientCreditCardId: `${this.sessionId}_${this.accountIndex}`,
+                accountDetail: accountDetail,
+                ccarCardDetail: ccarCardDetailResponse,
+                ccarCustomerDetail: ccarCustomerDetailResponse,
+            };
+
+            await this.creditCardDetailSessionDataService.saveCardDetails(cardDetailsPayload);
+            retryRequired = false;
+        } catch (e) {
+            console.error(
+                TransientCreditcardDataService.LOG_PREFIX.concat(
+                    "Error while storing CardDetails to Session: retry attempt ",
+                    retryCardDetailSessionDataStorageCount
+                ),
+                e,
+                this.correlationId
+            );
+
+            retryCardDetailSessionDataStorageCount++;
+        }
+    }
+
+    console.trace(
+        TransientCreditcardDataService.LOG_PREFIX.concat("Out storeCardDetails."),
+        this.correlationId
+    );
+}
+
+// Modify CreditCardAccountDetailMapper to accept dilEligibility (in CreditCardAccountDetailMapper.ts)
 public static mapRetailCreditCardAccountDetail(
     cardNumber: string,
     creditcardDetailResponse: CreditCardAccountDetailResponse,
@@ -345,7 +331,7 @@ public static mapRetailCreditCardAccountDetail(
     const accountDetail: AccountDetail = {
         // ... existing properties ...
         
-        // Use passed DIL eligibility instead of hardcoded value
+        // Use the passed dilEligibility value instead of hardcoding
         allowInstallmentLending: dilEligibility !== undefined ? dilEligibility : false
     };
 
