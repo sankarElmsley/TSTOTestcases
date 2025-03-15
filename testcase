@@ -73,7 +73,13 @@ it("should retry storing card details if initial save fails", async () => {
         // Execute the method
         const result = await service.getCreditcardData();
         
-        //import { TransientCreditcardDataService } from "../src/service/ctccd/transientCreditcardDataService";
+        // Verify successful result
+        expect(result).toBeDefined();
+        expect(result.statusCode).toBe(200);
+        
+        // Verify error was logged
+        expect(console.error).toHaveBeenCalled();
+    });import { TransientCreditcardDataService } from "../src/service/ctccd/transientCreditcardDataService";
 import { CreditCardDetailSessionDataService } from "../src/service/ctccd/creditCardDetailSessionDataService";
 import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
 import { CreditCardAccountEntryViewReportService } from "../src/service/ccaev/creditCardAccountEntryViewService";
