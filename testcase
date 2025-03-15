@@ -698,3 +698,41 @@ export type TransientCreditCardDataRequest = {
     promoOfferToggle?: boolean;
     promoOfferDetails?: PromoOfferDetails;
 };
+
+
+// Mock console functions
+global.console.trace = jest.fn();
+global.console.debug = jest.fn();
+global.console.error = jest.fn();
+global.console.info = jest.fn();
+global.console.warn = jest.fn();
+
+// Mock node-fetch and AWS SDK dependencies
+jest.mock('node-fetch', () => jest.fn());
+jest.mock('aws-sdk', () => ({
+    SecretsManager: jest.fn().mockImplementation(() => ({
+        getSecretValue: jest.fn().mockReturnValue({
+            promise: jest.fn().mockResolvedValue({ SecretString: '{"clientId":"mock-id","clientSecret":"mock-secret"}' })
+        })
+    })),
+    STS: jest.fn().mockImplementation(() => ({
+        assumeRole: jest.fn().mockReturnValue({
+            promise: jest.fn().mockResolvedValue({
+                Credentials: {
+                    AccessKeyId: 'mock-access-key',
+                    SecretAccessKey: 'mock-secret-key',
+                    SessionToken: 'mock-session-token'
+                }
+            })
+        })
+    }))
+}));
+
+// Mock cognito modules
+jest.mock('../common/cognito/get_cognito_token', () => ({
+    getCognitoToken: jest.fn().mockResolvedValue('mock-token')
+}));
+
+jest.mock('../common/cognito/cached_cognito_token', () => ({
+    getCachedCognitoToken: jest.fn().mockResolvedValue('mock-cached-token')
+}));
