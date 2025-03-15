@@ -677,3 +677,24 @@ describe("TransientCreditcardDataService", () => {
         });
     });
 });
+
+
+export type SessionAttribute = {
+    name: string;
+    value: string;
+    valueDataType: string;
+};
+
+export type PromoOfferDetails = {
+    interactionPoint: string;
+    sessionAttributes: SessionAttribute[];
+};
+
+export type TransientCreditCardDataRequest = {
+    accountIndex: number;
+    fromDate: string; // YYYY-MM-DD
+    toDate: string; // YYYY-MM-DD
+    currency?: string;
+    promoOfferToggle?: boolean;
+    promoOfferDetails?: PromoOfferDetails;
+};
