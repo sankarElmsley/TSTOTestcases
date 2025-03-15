@@ -58,168 +58,622 @@ export default {
 
 -----------------------------------------------------------------
 
-// CHANGE 1: Add imports to TransientCreditcardDataService.ts
-import { EligibilityDecisionService } from "../dcn/eligibilityDecisionService";
-import { RetailCreditCardAccountDetailResponseMappingHelper as RetailMappingHelper } from "../mapper/retailCreditCardAccountDetailResponseMappingHelper";
+import { TransientCreditcardDataService } from "../src/service/ctccd/TransientCreditcardDataService";
+import { CreditCardDetailSessionDataService } from "../src/service/ctccd/creditCardDetailSessionDataService";
+import { CreditCardArrangementReportService } from "../src/service/ccar/creditCardArrangementReportService";
+import { CreditCardAccountEntryViewReportService } from "../src/service/ccaev/creditCardAccountEntryViewService";
+import { CreditCardAccountAuthorizationService } from "../src/service/ccaa/creditCardAccountAuthorizationService";
+import { CreditCardRewardService } from "../src/service/ccr/creditCardRewardService";
+import { CustomerInstallmentPlanOfferService } from "../src/service/cipo/customerInstallmentPlanOfferService";
+import { CreditcardUtilityService } from "../src/service/ccu/creditcardUtilityService";
+import { CdbContextService } from "../src/cdbcontext/cdbContextService";
+import { EligibilityDecisionService } from "../src/service/dcn/eligibilityDecisionService";
+import { TransientCreditCardDataHelper } from "../src/util/transientCreditCardDataHelper";
+import { TransientCreditCardDataRequest } from "../src/model/ctccd/transientCreditCardDataRequest";
+import { ClientError } from "../src/util/clientError";
+import { ServerError } from "../src/util/serverError";
+import { ErrorCodes } from "../src/util/errorCodes";
+import { ApiConstants } from "../src/util/constants";
 
-// CHANGE 2: Add property and update constructor in TransientCreditcardDataService class
-class TransientCreditcardDataService {
-    // Add this property
-    private readonly decisionService: EligibilityDecisionService;
-    private dilEligibilityDecision: boolean = false;
-    
-    // Update constructor to include decisionService initialization
-    constructor(ecifId: string, ocifId: string, sessionId: string, requestBody: TransientCreditCardDataRequest, correlationId: string) {
-        // ... existing initializations ...
-        this.decisionService = new EligibilityDecisionService(correlationId);
-        // ... existing initializations ...
-    }
-    
-    // CHANGE 3: Add method to get DIL eligibility
-    private async getDilEligibilityDecision(cardNumber: string, creditcardDetailResponse: CreditCardAccountDetailResponse): Promise<boolean> {
-        console.trace(
-            TransientCreditcardDataService.LOG_PREFIX.concat("In getDilEligibilityDecision..."),
-            this.correlationId
-        );
-        
-        try {
-            const lineOfBusiness = creditcardDetailResponse?.lob ?? '';
-            const clientProductCode = creditcardDetailResponse?.retail?.inqGeneralAcctResponse?.accountGeneralInfo?.clientProductCode ?? '';
-            const customerInfo = RetailMappingHelper.findCustomerInfo(
-                cardNumber, 
-                creditcardDetailResponse?.retail?.inqCustInfoResponse
-            );
-            
-            const customerType = customerInfo?.customerType ?? '';
-            
-            console.info(
-                TransientCreditcardDataService.LOG_PREFIX.concat(
-                    "Eligibility Decision request params: lineOfBusiness: ", lineOfBusiness,
-                    ", clientProductCode: ", clientProductCode,
-                    ", customerType: ", customerType
-                ),
-                this.correlationId
-            );
-            
-            if (lineOfBusiness && clientProductCode && customerType) {
-                const decisionApiResponse = await this.decisionService.getDilEligibilityDecision(
-                    lineOfBusiness, 
-                    clientProductCode, 
-                    customerType
-                );
-                
-                console.info(
-                    TransientCreditcardDataService.LOG_PREFIX.concat(
-                        "Eligibility Decision is retrieved from the DCN API."
-                    ),
-                    this.correlationId
-                );
-                
-                const eligibilityDecision = decisionApiResponse?.result?.AllowInstallmentLending?.isEligible ?? false;
-                return eligibilityDecision;
-            }
-        } catch (e) {
-            console.error(
-                TransientCreditcardDataService.LOG_PREFIX.concat(
-                    "Error while fetching DIL eligibility decision."
-                ),
-                e,
-                this.correlationId
-            );
-        }
-        
-        return false;
-    }
-    
-    // CHANGE 4: Update retrieveCardDetails to get DIL eligibility
-    private async retrieveCardDetails(cardNumber: string): Promise<void> {
-        try {
-            // ... existing code ...
-            
-            // After credit card details are retrieved, get DIL eligibility
-            if (this.creditCardDetailResponse) {
-                this.dilEligibilityDecision = await this.getDilEligibilityDecision(
-                    cardNumber, 
-                    this.creditCardDetailResponse
-                );
-            } else {
-                this.dilEligibilityDecision = false;
-            }
-            
-            // ... rest of existing code ...
-        } catch (error) {
-            console.error("Unexpected error in retrieveCardDetails", error);
-            throw error;
-        }
-    }
-    
-    // CHANGE 5: Update formatAndSaveAccountDetail to use dilEligibilityDecision 
-    private async formatAndSaveAccountDetail(
-        cardNumber: string,
-        creditcardDetailResponse?: CreditCardAccountDetailResponse,
-        customerDetailResponse?: CustomerDetailsResponse,
-        transientCreditCardAccountDetail?: AccountDetail,
-        availableCredit?: number,
-        rewardTypeResponse?: GetRewardTypeResponse
-    ): Promise<AccountDetails> {
-        // ... existing code ...
-        
-        try {
-            if (creditcardDetailResponse && customerDetailResponse) {
-                if (transientCreditCardAccountDetail) {
-                    // Update existing account detail
-                    transientCreditCardAccountDetail.allowInstallmentLending = this.dilEligibilityDecision;
-                    transientCreditCardAccountDetails = {
-                        accountDetail: transientCreditCardAccountDetail
-                    };
-                } else {
-                    // Create new account detail
-                    transientCreditCardAccountDetail =
-                        CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
-                            cardNumber,
-                            creditcardDetailResponse,
-                            customerDetailResponse,
-                            this.correlationId,
-                            this.matchedBin,
-                            availableCredit,
-                            rewardTypeResponse,
-                            this.dilEligibilityDecision  // Pass DIL eligibility here
-                        );
-                    
-                    // ... rest of existing code ...
-                }
-            }
-            // ... rest of existing code ...
-        } catch (e) {
-            // ... existing error handling ...
-        }
-        
-        return transientCreditCardAccountDetails;
-    }
-}
+// Mock error logger function
+const mockError = jest.fn();
 
-// CHANGE 6: Update CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail
-// In CreditCardAccountDetailMapper.ts:
-public static mapRetailCreditCardAccountDetail(
-    cardNumber: string,
-    creditcardDetailResponse: CreditCardAccountDetailResponse,
-    customerDetailResponse: CustomerDetailsResponse,
-    correlationId: string,
-    bin: Bin,
-    availableCredit?: number,
-    rewardTypeResponse?: GetRewardTypeResponse,
-    dilEligibility?: boolean // Add this parameter
-): AccountDetail {
-    // ... existing code ...
+// Mock logger functions
+jest.mock("../common/utils/logger", () => ({
+    debug: jest.fn(),
+    debugWithSanitize: jest.fn(),
+    error: jest.fn().mockImplementation((...args) => mockError(...args)),
+    trace: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    logBackendServiceRequest: jest.fn(),
+    logBackendServiceError: jest.fn(),
+    logBackendServiceResponse: jest.fn()
+}));
+
+// Mock console functions
+global.console.trace = jest.fn();
+global.console.debug = jest.fn();
+global.console.error = jest.fn();
+global.console.info = jest.fn();
+global.console.warn = jest.fn();
+
+// Mock all dependent services
+jest.mock("../src/service/ctccd/creditCardDetailSessionDataService");
+jest.mock("../src/service/ccar/creditCardArrangementReportService");
+jest.mock("../src/service/ccaev/creditCardAccountEntryViewService");
+jest.mock("../src/service/ccaa/creditCardAccountAuthorizationService");
+jest.mock("../src/service/ccr/creditCardRewardService");
+jest.mock("../src/service/cipo/customerInstallmentPlanOfferService");
+jest.mock("../src/service/ccu/creditcardUtilityService");
+jest.mock("../src/cdbcontext/cdbContextService");
+jest.mock("../src/service/dcn/eligibilityDecisionService");
+jest.mock("../src/util/transientCreditCardDataHelper", () => ({
+    TransientCreditCardDataHelper: {
+        filterCreditCardAccounts: jest.fn(),
+        getCardNumber: jest.fn(),
+        getMatchedBIN: jest.fn(),
+        isDateExpired: jest.fn().mockReturnValue(false)
+    }
+}));
+
+// Mock performance.now
+const originalPerformanceNow = performance.now;
+let mockPerformanceNowValue = 1000;
+
+describe("TransientCreditcardDataService", () => {
+    // Test setup variables
+    const mockCorrelationId = "test-correlation-id";
+    const mockEcifId = "test-ecif-id";
+    const mockOcifId = "test-ocif-id";
+    const mockSessionId = "test-session-id";
+    const mockAccountIndex = 1;
+    const mockCardNumber = "5191230000000000";
     
-    const accountDetail: AccountDetail = {
-        // ... existing properties ...
-        
-        // Replace hardcoded true with dynamic value
-        allowInstallmentLending: dilEligibility !== undefined ? dilEligibility : false,
+    // Mock request body
+    const mockRequestBody: TransientCreditCardDataRequest = {
+        accountIndex: mockAccountIndex,
+        fromDate: "2024-01-01",
+        toDate: "2024-02-01",
+        currency: "CAD"
+    };
+
+    // Mock BIN data
+    const mockBinRanges = [
+        {
+            BIN: "519123",
+            LOB: "RETAIL",
+            productCode: "MC"
+        }
+    ];
+
+    // Mock matched BIN
+    const mockMatchedBin = {
+        BIN: "519123",
+        LOB: "RETAIL",
+        productCode: "MC"
+    };
+
+    // Mock session data
+    const mockSessionData = {
+        data: [
+            {
+                accountType: "CC",
+                accountNumber: mockCardNumber,
+                index: mockAccountIndex
+            }
+        ]
     };
     
-    // ... existing code ...
+    // Mock card details for session storage
+    const mockCardDetailsSessionData = {
+        ecifId: mockEcifId,
+        sessionId: mockSessionId,
+        accountIndex: mockAccountIndex,
+        transientCreditCardId: `${mockSessionId}_${mockAccountIndex}`,
+        accountDetail: {
+            accountNumber: "5191XXXXXXXXXX00",
+            cardholderName: "TEST USER",
+            expiryDate: "01/28",
+            creditLimit: 10000,
+            currentBalance: 5000,
+            availableCredit: 5000,
+            cardType: "Mastercard",
+            primaryCard: true,
+            allowInstallmentLending: true
+        },
+        ccarCardDetail: {
+            lob: "RETAIL",
+            retail: {
+                inqGeneralAcctResponse: {
+                    accountGeneralInfo: {
+                        accountID: "123456789012345",
+                        clientProductCode: "MCW"
+                    }
+                },
+                inqCustInfoResponse: {
+                    customerInfo: [{
+                        customerType: "PRIMARY"
+                    }]
+                }
+            }
+        },
+        ccarCustomerDetail: {
+            customerDetails: {
+                firstName: "TEST",
+                lastName: "USER"
+            }
+        }
+    };
+
+    // Mock credit card detail and available credit responses
+    const mockCreditCardDetailResponse = {
+        lob: "RETAIL",
+        retail: {
+            inqGeneralAcctResponse: {
+                accountGeneralInfo: {
+                    accountID: "123456789012345",
+                    clientProductCode: "MCW"
+                }
+            },
+            inqCustInfoResponse: {
+                customerInfo: [{
+                    customerType: "PRIMARY"
+                }]
+            },
+            inqRealTimeAuthSyResponse: {
+                authSystems: {
+                    availCredit: 5000
+                }
+            }
+        }
+    };
     
-    return accountDetail;
-}
+    // Mock customer detail response
+    const mockCustomerDetailResponse = {
+        customerDetails: {
+            firstName: "TEST",
+            lastName: "USER"
+        }
+    };
+    
+    // Mock DIL eligibility response
+    const mockDilEligibilityResponse = {
+        result: {
+            AllowInstallmentLending: {
+                isEligible: true
+            }
+        }
+    };
+
+    // Create a service instance and inject mocks
+    let service: TransientCreditcardDataService;
+    
+    beforeEach(() => {
+        jest.clearAllMocks();
+        
+        // Mock performance.now to return incrementing values
+        mockPerformanceNowValue = 1000;
+        performance.now = jest.fn(() => {
+            mockPerformanceNowValue += 100;
+            return mockPerformanceNowValue;
+        });
+        
+        // Mock TransientCreditCardDataHelper static methods
+        (TransientCreditCardDataHelper.filterCreditCardAccounts as jest.Mock).mockReturnValue([
+            { accountType: "CC", accountNumber: mockCardNumber, index: mockAccountIndex }
+        ]);
+        (TransientCreditCardDataHelper.getCardNumber as jest.Mock).mockReturnValue(mockCardNumber);
+        (TransientCreditCardDataHelper.getMatchedBIN as jest.Mock).mockReturnValue(mockMatchedBin);
+        
+        // Initialize service with mocked constructor
+        service = new TransientCreditcardDataService(
+            mockEcifId,
+            mockOcifId,
+            mockSessionId,
+            mockRequestBody,
+            mockCorrelationId
+        );
+        
+        // Mock CreditCardDetailSessionDataService methods
+        (CreditCardDetailSessionDataService.prototype.fetchCardDetails as jest.Mock).mockResolvedValue(undefined);
+        (CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock).mockResolvedValue(undefined);
+        
+        // Mock CreditCardUtilityService methods
+        (CreditcardUtilityService.prototype.getBinRangesCached as jest.Mock).mockResolvedValue(mockBinRanges);
+        
+        // Mock CdbContextService methods
+        (CdbContextService.prototype.getSessionData as jest.Mock).mockResolvedValue(mockSessionData);
+        
+        // Mock CreditCardArrangementReportService methods
+        (CreditCardArrangementReportService.prototype.getCreditCardDetail as jest.Mock).mockResolvedValue(mockCreditCardDetailResponse);
+        (CreditCardArrangementReportService.prototype.fetchCustomerDetails as jest.Mock).mockResolvedValue(mockCustomerDetailResponse);
+        
+        // Mock EligibilityDecisionService methods
+        (EligibilityDecisionService.prototype.getDilEligibilityDecision as jest.Mock).mockResolvedValue(mockDilEligibilityResponse);
+        
+        // Mock remaining service methods that will be used in tests
+        (CreditCardAccountEntryViewReportService.prototype.getPostedTransactions as jest.Mock).mockResolvedValue({
+            responseBody: { postingActivityList: [] }
+        });
+        
+        (CreditCardAccountAuthorizationService.prototype.getPendingTransactions as jest.Mock).mockResolvedValue({
+            pendingAuth: []
+        });
+        
+        (CustomerInstallmentPlanOfferService.prototype.getInstallmentPlanOffer as jest.Mock).mockResolvedValue({
+            offers: []
+        });
+        
+        (CreditCardRewardService.prototype.getRewardTypeData as jest.Mock).mockResolvedValue({
+            rewardType: "CASH_BACK"
+        });
+    });
+
+    afterEach(() => {
+        jest.clearAllMocks();
+        performance.now = originalPerformanceNow;
+    });
+
+    describe("constructor", () => {
+        it("should initialize with the correct properties", () => {
+            // Verify the service was created successfully
+            expect(service).toBeDefined();
+            
+            // Test private properties using any type assertion
+            const serviceAny = service as any;
+            expect(serviceAny.ecifId).toBe(mockEcifId);
+            expect(serviceAny.ocifId).toBe(mockOcifId);
+            expect(serviceAny.sessionId).toBe(mockSessionId);
+            expect(serviceAny.accountIndex).toBe(mockAccountIndex);
+            expect(serviceAny.correlationId).toBe(mockCorrelationId);
+            expect(serviceAny.requestBody).toBe(mockRequestBody);
+        });
+
+        it("should initialize all required service dependencies", () => {
+            // Verify dependent services are initialized
+            const serviceAny = service as any;
+            expect(serviceAny.creditCardDetailSessionDataService).toBeInstanceOf(CreditCardDetailSessionDataService);
+            expect(serviceAny.creditCardArrangementReportService).toBeInstanceOf(CreditCardArrangementReportService);
+            expect(serviceAny.creditCardAccountEntryViewReportService).toBeInstanceOf(CreditCardAccountEntryViewReportService);
+            expect(serviceAny.creditCardAccountAuthorizationService).toBeInstanceOf(CreditCardAccountAuthorizationService);
+            expect(serviceAny.creditCardRewardService).toBeInstanceOf(CreditCardRewardService);
+            expect(serviceAny.customerInstallmentPlanOfferService).toBeInstanceOf(CustomerInstallmentPlanOfferService);
+            expect(serviceAny.creditCardUtilityService).toBeInstanceOf(CreditcardUtilityService);
+            expect(serviceAny.cdbContextService).toBeInstanceOf(CdbContextService);
+            expect(serviceAny.decisionService).toBeInstanceOf(EligibilityDecisionService);
+        });
+    });
+
+    describe("getCreditcardData", () => {
+        it("should successfully retrieve credit card data when no session data exists", async () => {
+            // Execute the method
+            const result = await service.getCreditcardData();
+            
+            // Verify successful result
+            expect(result).toBeDefined();
+            expect(result.statusCode).toBe(200);
+            
+            // Verify the API calls were made
+            expect(CreditcardUtilityService.prototype.getBinRangesCached).toHaveBeenCalled();
+            expect(CdbContextService.prototype.getSessionData).toHaveBeenCalled();
+            expect(CreditCardArrangementReportService.prototype.getCreditCardDetail).toHaveBeenCalled();
+            expect(CreditCardArrangementReportService.prototype.fetchCustomerDetails).toHaveBeenCalled();
+            expect(CreditCardDetailSessionDataService.prototype.saveCardDetails).toHaveBeenCalled();
+        });
+
+        it("should retrieve credit card data from session storage when available", async () => {
+            // Mock session data is available
+            (CreditCardDetailSessionDataService.prototype.fetchCardDetails as jest.Mock).mockResolvedValue(mockCardDetailsSessionData);
+            
+            // Execute the method
+            const result = await service.getCreditcardData();
+            
+            // Verify successful result
+            expect(result).toBeDefined();
+            expect(result.statusCode).toBe(200);
+            
+            // Verify the session storage was checked
+            expect(CreditCardDetailSessionDataService.prototype.fetchCardDetails).toHaveBeenCalledWith(
+                mockEcifId, mockSessionId, mockAccountIndex
+            );
+            
+            // Verify we still call for real-time available credit
+            expect(CreditCardArrangementReportService.prototype.getCreditCardDetail).toHaveBeenCalledWith(
+                true, mockCardNumber, ApiConstants.TSYS_CLIENT_ID_CANADA, false
+            );
+            
+            // Verify we don't call these again when session data exists
+            expect(CreditCardArrangementReportService.prototype.fetchCustomerDetails).not.toHaveBeenCalled();
+        });
+
+        it("should handle errors when BIN ranges or session data cannot be retrieved", async () => {
+            // Mock error for BIN ranges 
+            (CreditcardUtilityService.prototype.getBinRangesCached as jest.Mock).mockRejectedValue(
+                new Error("Failed to retrieve BIN ranges")
+            );
+            
+            // Execute the method
+            const result = await service.getCreditcardData();
+            
+            // Verify error result
+            expect(result).toBeDefined();
+            expect(result.statusCode).toBe(500);
+            expect(result.errorCode).toBe(ErrorCodes.CTX_BIN_API_FAILED.errorCode);
+            
+            // Verify error was logged
+            expect(console.error).toHaveBeenCalled();
+        });
+
+        it("should handle case when customer has no credit cards", async () => {
+            // Mock empty credit card accounts
+            (TransientCreditCardDataHelper.filterCreditCardAccounts as jest.Mock).mockReturnValue([]);
+            
+            // Execute the method
+            const result = await service.getCreditcardData();
+            
+            // Verify error result
+            expect(result).toBeDefined();
+            expect(result.statusCode).toBe(400);
+            expect(result.errorCode).toBe(ErrorCodes.CUSTOMER_CC_COUNT_ZERO.errorCode);
+            
+            // Verify error was logged
+            expect(console.error).toHaveBeenCalled();
+        });
+
+        it("should get DIL eligibility from the eligibility decision service", async () => {
+            // Execute the method
+            const result = await service.getCreditcardData();
+            
+            // Verify successful result
+            expect(result).toBeDefined();
+            expect(result.statusCode).toBe(200);
+            
+            // Verify the DIL eligibility service was called
+            expect(EligibilityDecisionService.prototype.getDilEligibilityDecision).toHaveBeenCalled();
+            
+            // Verify DIL eligibility was passed to the card details storage
+            const saveCardDetailsMock = CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock;
+            const savedPayload = saveCardDetailsMock.mock.calls[0][0];
+            expect(savedPayload.accountDetail.allowInstallmentLending).toBe(true);
+        });
+
+        it("should use DIL eligibility from session data when available", async () => {
+            // Mock session data with DIL eligibility already set
+            (CreditCardDetailSessionDataService.prototype.fetchCardDetails as jest.Mock).mockResolvedValue(mockCardDetailsSessionData);
+            
+            // Execute the method
+            await service.getCreditcardData();
+            
+            // Verify we don't call the eligibility service again
+            expect(EligibilityDecisionService.prototype.getDilEligibilityDecision).not.toHaveBeenCalled();
+        });
+
+        it("should handle errors during DIL eligibility determination", async () => {
+            // Mock eligibility service error
+            (EligibilityDecisionService.prototype.getDilEligibilityDecision as jest.Mock).mockRejectedValue(
+                new Error("Failed to get eligibility decision")
+            );
+            
+            // Execute the method
+            const result = await service.getCreditcardData();
+            
+            // Service should still complete successfully but set eligibility to false
+            expect(result).toBeDefined();
+            expect(result.statusCode).toBe(200);
+            
+            // Verify error was logged
+            expect(console.error).toHaveBeenCalled();
+            
+            // Verify DIL eligibility was set to false in saved card details
+            const saveCardDetailsMock = CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock;
+            const savedPayload = saveCardDetailsMock.mock.calls[0][0];
+            expect(savedPayload.accountDetail.allowInstallmentLending).toBe(false);
+        });
+
+        it("should retry storing card details if initial save fails", async () => {
+            // Mock first save attempt fails, second succeeds
+            (CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock)
+                .mockRejectedValueOnce(new Error("Storage error"))
+                .mockResolvedValueOnce(undefined);
+            
+            // Execute the method
+            const result = await service.getCreditcardData();
+            
+            // Verify successful result
+            expect(result).toBeDefined();
+            expect(result.statusCode).toBe(200);
+            
+            // Verify saveCardDetails was called twice
+            expect(CreditCardDetailSessionDataService.prototype.saveCardDetails).toHaveBeenCalledTimes(2);
+            
+            // Verify error was logged
+            expect(console.error).toHaveBeenCalled();
+        });
+    });
+
+    describe("identifyCardNumberAndBinRange", () => {
+        it("should correctly identify card number and BIN range", async () => {
+            // Using TypeScript type assertion to access private method
+            const identifyCardNumberAndBinRange = (service as any).identifyCardNumberAndBinRange.bind(service);
+            
+            // Execute the private method
+            const result = await identifyCardNumberAndBinRange();
+            
+            // Verify correct card number is returned
+            expect(result).toBe(mockCardNumber);
+            
+            // Verify helper methods were called
+            expect(TransientCreditCardDataHelper.filterCreditCardAccounts).toHaveBeenCalled();
+            expect(TransientCreditCardDataHelper.getCardNumber).toHaveBeenCalled();
+            expect(TransientCreditCardDataHelper.getMatchedBIN).toHaveBeenCalled();
+            
+            // Verify BIN range was set on service
+            expect((service as any).matchedBin).toBe(mockMatchedBin);
+        });
+
+        it("should throw error when customer has no credit cards", async () => {
+            // Mock empty credit card accounts
+            (TransientCreditCardDataHelper.filterCreditCardAccounts as jest.Mock).mockReturnValue([]);
+            
+            // Using TypeScript type assertion to access private method
+            const identifyCardNumberAndBinRange = (service as any).identifyCardNumberAndBinRange.bind(service);
+            
+            // Verify method throws the expected error
+            await expect(identifyCardNumberAndBinRange()).rejects.toThrow(ClientError);
+            
+            // Verify error was logged
+            expect(console.error).toHaveBeenCalled();
+        });
+    });
+
+    describe("getDilEligibilityDecision", () => {
+        it("should correctly determine DIL eligibility", async () => {
+            // Using TypeScript type assertion to access private method
+            const getDilEligibilityDecision = (service as any).getDilEligibilityDecision.bind(service);
+            
+            // Execute the private method
+            const result = await getDilEligibilityDecision(mockCardNumber, mockCreditCardDetailResponse);
+            
+            // Verify correct eligibility is returned
+            expect(result).toBe(true);
+            
+            // Verify eligibility service was called with correct parameters
+            expect(EligibilityDecisionService.prototype.getDilEligibilityDecision).toHaveBeenCalledWith(
+                "RETAIL", "MCW", "PRIMARY"
+            );
+        });
+
+        it("should return false if eligibility service throws an error", async () => {
+            // Mock eligibility service error
+            (EligibilityDecisionService.prototype.getDilEligibilityDecision as jest.Mock).mockRejectedValue(
+                new Error("Failed to get eligibility decision")
+            );
+            
+            // Using TypeScript type assertion to access private method
+            const getDilEligibilityDecision = (service as any).getDilEligibilityDecision.bind(service);
+            
+            // Execute the private method
+            const result = await getDilEligibilityDecision(mockCardNumber, mockCreditCardDetailResponse);
+            
+            // Verify eligibility defaults to false
+            expect(result).toBe(false);
+            
+            // Verify error was logged
+            expect(console.error).toHaveBeenCalled();
+        });
+
+        it("should return false if required parameters are missing", async () => {
+            // Mock credit card detail response with missing data
+            const incompleteResponse = {
+                lob: "",  // Empty LOB
+                retail: {
+                    inqGeneralAcctResponse: {
+                        accountGeneralInfo: {
+                            accountID: "123456789012345",
+                            clientProductCode: ""  // Empty product code
+                        }
+                    },
+                    inqCustInfoResponse: {
+                        customerInfo: []  // Empty customer info
+                    }
+                }
+            };
+            
+            // Using TypeScript type assertion to access private method
+            const getDilEligibilityDecision = (service as any).getDilEligibilityDecision.bind(service);
+            
+            // Execute the private method
+            const result = await getDilEligibilityDecision(mockCardNumber, incompleteResponse);
+            
+            // Verify eligibility defaults to false
+            expect(result).toBe(false);
+            
+            // Verify eligibility service was not called
+            expect(EligibilityDecisionService.prototype.getDilEligibilityDecision).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("storeCardDetails", () => {
+        it("should store card details with DIL eligibility flag", async () => {
+            // Set DIL eligibility on service
+            (service as any).dilEligibilityDecision = true;
+            
+            // Mock account detail
+            const accountDetail = {
+                accountNumber: "5191XXXXXXXXXX00",
+                cardholderName: "TEST USER"
+            };
+            
+            // Using TypeScript type assertion to access private method
+            const storeCardDetails = (service as any).storeCardDetails.bind(service);
+            
+            // Execute the private method
+            await storeCardDetails(accountDetail, mockCreditCardDetailResponse, mockCustomerDetailResponse);
+            
+            // Verify saveCardDetails was called with correct parameters
+            const saveCardDetailsMock = CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock;
+            expect(saveCardDetailsMock).toHaveBeenCalled();
+            
+            // Verify DIL eligibility was set in saved payload
+            const savedPayload = saveCardDetailsMock.mock.calls[0][0];
+            expect(savedPayload.accountDetail.allowInstallmentLending).toBe(true);
+        });
+
+        it("should retry saving card details once if first attempt fails", async () => {
+            // Mock first save attempt fails, second succeeds
+            (CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock)
+                .mockRejectedValueOnce(new Error("Storage error"))
+                .mockResolvedValueOnce(undefined);
+            
+            // Set DIL eligibility on service
+            (service as any).dilEligibilityDecision = false;
+            
+            // Mock account detail
+            const accountDetail = {
+                accountNumber: "5191XXXXXXXXXX00",
+                cardholderName: "TEST USER"
+            };
+            
+            // Using TypeScript type assertion to access private method
+            const storeCardDetails = (service as any).storeCardDetails.bind(service);
+            
+            // Execute the private method
+            await storeCardDetails(accountDetail, mockCreditCardDetailResponse, mockCustomerDetailResponse);
+            
+            // Verify saveCardDetails was called twice
+            expect(CreditCardDetailSessionDataService.prototype.saveCardDetails).toHaveBeenCalledTimes(2);
+            
+            // Verify error was logged
+            expect(console.error).toHaveBeenCalled();
+        });
+
+        it("should not retry more than once if save keeps failing", async () => {
+            // Mock save attempts always fail
+            (CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock).mockRejectedValue(
+                new Error("Storage error")
+            );
+            
+            // Set DIL eligibility on service
+            (service as any).dilEligibilityDecision = true;
+            
+            // Mock account detail
+            const accountDetail = {
+                accountNumber: "5191XXXXXXXXXX00",
+                cardholderName: "TEST USER"
+            };
+            
+            // Using TypeScript type assertion to access private method
+            const storeCardDetails = (service as any).storeCardDetails.bind(service);
+            
+            // Execute the private method
+            await storeCardDetails(accountDetail, mockCreditCardDetailResponse, mockCustomerDetailResponse);
+            
+            // Verify saveCardDetails was called exactly twice (initial + 1 retry)
+            expect(CreditCardDetailSessionDataService.prototype.saveCardDetails).toHaveBeenCalledTimes(2);
+            
+            // Verify errors were logged twice
+            expect(console.error).toHaveBeenCalledTimes(2);
+        });
+    });
+});
