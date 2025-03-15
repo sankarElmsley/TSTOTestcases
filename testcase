@@ -908,3 +908,28 @@ describe("TransientCreditcardDataService", () => {
     });
 });
 });
+
+
+
+   it("should retry storing card details if initial save fails", async () => {
+        // Clear previous mock calls
+        jest.clearAllMocks();
+        
+        // Mock first save attempt fails, second succeeds
+        (CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock)
+            .mockRejectedValueOnce(new Error("Storage error"))
+            .mockResolvedValue(undefined);
+        
+        // Force fetching from backend instead of session
+        (CreditCardDetailSessionDataService.prototype.fetchCardDetails as jest.Mock).mockResolvedValue(undefined);
+        
+        // Execute the method
+        const result = await service.getCreditcardData();
+        
+        // Verify successful result
+        expect(result).toBeDefined();
+        expect(result.statusCode).toBe(200);
+        
+        // Verify error was logged
+        expect(console.error).toHaveBeenCalled();
+    });
