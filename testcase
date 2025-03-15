@@ -711,6 +711,9 @@ describe("TransientCreditcardDataService", () => {
 
     describe("storeCardDetails", () => {
     it("should store card details with DIL eligibility flag", async () => {
+        // Reset mocks to ensure clean state
+        jest.clearAllMocks();
+        
         // Need to mock the prototype method
         const originalMethod = TransientCreditcardDataService.prototype.storeCardDetails;
         TransientCreditcardDataService.prototype.storeCardDetails = jest.fn().mockImplementation(async function(
@@ -737,6 +740,10 @@ describe("TransientCreditcardDataService", () => {
         );
         // Set DIL eligibility on service
         (testService as any).dilEligibilityDecision = true;
+        
+        // Reset the mock implementation
+        (CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock).mockReset();
+        (CreditCardDetailSessionDataService.prototype.saveCardDetails as jest.Mock).mockResolvedValue(undefined);
         
         // Mock account detail
         const accountDetail = {
