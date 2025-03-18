@@ -1,292 +1,47 @@
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { CreditcardUtilityService } from '../../src/services/creditcardUtilityService';
-import { CrossAccountAPICache } from '../../../common/cross-account/cached-apiinformation';
-import { ServerError } from '../../util/serverError';
-import { ErrorCodes } from '../../util/errorCodes';
-
-// Mock lodash
-jest.mock('lodash', () => ({
-    cloneDeepWith: jest.fn(),
-    isObject: jest.fn(),
-    toLower: jest.fn(),
-    some: jest.fn()
-}));
-
-// Mock uuid
-jest.mock('uuid', () => ({
-    v4: jest.fn()
-}));
-
-// Mock logger
-jest.mock('../../../common/utils/logger', () => ({
-    error: jest.fn(),
-    trace: jest.fn(),
-    info: jest.fn(),
-    logBackendServiceRequest: jest.fn(),
-    logBackendServiceResponse: jest.fn(),
-    logBackendServiceError: jest.fn()
-}));
-
-
-
-/** @type {import('ts-jest').JestConfigWithTsJest} */
-export default {
-  preset: "ts-jest",
-  testEnvironment: "node",
-  // Ignore resource files
-  testPathIgnorePatterns: [
-    "/node_modules/",
-    "/test/resources/"
-  ],
-  // Specify where test files are located
-  testMatch: [
-    "**/__tests__/**/*.test.ts",
-    "**/?(*.)+(spec|test).ts"
-  ],
-  extensionsToTreatAsEsm: ['.ts'],
-  transform: {
-    "^.+\\.tsx?$": [
-      "ts-jest",
-      {
-        useESM: true,
-        isolatedModules: true,
-      },
-    ],
-  },
-};
-
-
------------------------------------------------------------------
-
-import { CustomerInfo } from "../../../src/model/ccar/getAccountDetailResponse";
-import { AccountDetail } from "../../src/model/ctccd/transientCreditCardDataResponse";
-import { CreditCardAccountDetailMapper } from "../../../src/service/mapper/creditCardAccountDetailMapper";
-import { RetailCreditCardAccountDetailResponseMappingHelper as RetailMappingHelper } from "../../../src/service/mapper/retailCreditCardAccountDetailResponseMappingHelper";
-import { TransientCreditCardDataHelper } from "../../../src/service/util/transientCreditCardDataHelper";
-import { ApiConstants } from "../../../src/util/constants";
-import retailCreditCardDetailResponse from "../resources/ccar/CCAR_RESPONSE_CC_DTL.json";
-import retailCustomerDetailResponse from "../../resources/ccar/CCAR_RESPONSE_CUSTOMER_DT.json";
-import CCU_RESPONSE_200 from "../../resources/ccu/CCU_RESPONSE.json";
-
-// Mock all the required functions
-jest.mock("../../../common/util/10gge", () => ({
-  debug: jest.fn(),
-  debugWithSanitize: jest.fn(),
-  infoWithSanitize: jest.fn(),
-  error: jest.fn(),
-  info: jest.fn(),
-  trace: jest.fn(),
-  logBackendServiceRequest: jest.fn(),
-  logBackendServiceError: jest.fn(),
-  logBackendServiceResponse: jest.fn(),
-}));
-
-// Mock console functions
-global.console.trace = jest.fn();
-global.console.debug = jest.fn();
-global.console.error = jest.fn();
-global.console.info = jest.fn();
-global.console.warn = jest.fn();
-
-// Mock TransientCreditCardDataHelper.getMatchedBIN
-jest.mock("../../../src/service/util/transientCreditCardDataHelper", () => ({
-  getMatchedBIN: jest.fn().mockReturnValue({
-    binRangeStart: "552489",
-    binRangeEnd: "552489",
-    cardBrand: "Mastercard",
-    cardType: "Credit",
-    productName: "Test Card",
-  }),
-}));
-
-// Mock RetailMappingHelper functions including isCCBalanceProtectionAge
-jest.mock("../../../src/service/mapper/retailCreditCardAccountDetailResponseMappingHelper", () => ({
-  findCustomerInfo: jest.fn().mockReturnValue({
-    cardNum: "5524890000109322",
-    customerName: "Test User",
-    isPrimaryCard: jest.fn().mockReturnValue(true),
-    getAdditionalSecondaryCards: jest.fn().mockReturnValue([1]),
-    getCardHolderName: jest.fn().mockReturnValue("Test User"),
-    isCardNotActivated: jest.fn().mockReturnValue(false),
-    getCashAdvanceRate: jest.fn().mockReturnValue(21.99),
-    isCardDeactivatedAndReissued: jest.fn().mockReturnValue(false),
-    isCardDeactivatedAndNotReissued: jest.fn().mockReturnValue(false),
-    isPrepaidCard: jest.fn().mockReturnValue(false),
-    getLoyaltyEligibility: jest.fn().mockReturnValue(true),
-    getProductCode: jest.fn().mockReturnValue("MCHE"),
-    getPurchaseRate: jest.fn().mockReturnValue(19.99),
-    getRewardType: jest.fn().mockReturnValue("AIR MILES"),
-    getLatestStatementDates: jest.fn().mockReturnValue({
-      currentMonth: "2024-03",
-      previousMonth: "2024-02",
-    }),
-    getTransferRate: jest.fn().mockReturnValue(22.99),
-    getCCBalanceProtectionAge: jest.fn().mockReturnValue(false),
-  }),
-  isPrimaryCard: jest.fn().mockReturnValue(true),
-  getAdditionalSecondaryCards: jest.fn().mockReturnValue([]),
-  getCardHolderName: jest.fn().mockReturnValue("Test User"),
-  isCardNotActivated: jest.fn().mockReturnValue(false),
-  getCashAdvanceRate: jest.fn().mockReturnValue(21.99),
-  isCardDeactivatedAndReissued: jest.fn().mockReturnValue(false),
-  isCardDeactivatedAndNotReissued: jest.fn().mockReturnValue(false),
-  isPrepaidCard: jest.fn().mockReturnValue(false),
-  getLoyaltyEligibility: jest.fn().mockReturnValue(true),
-  getProductCode: jest.fn().mockReturnValue("MCHE"),
-  getPurchaseRate: jest.fn().mockReturnValue(19.99),
-  getRewardType: jest.fn().mockReturnValue("AIR MILES"),
-  getLatestStatementDates: jest.fn().mockReturnValue({
-    currentMonth: "2024-03",
-    previousMonth: "2024-02",
-  }),
-  getTransferRate: jest.fn().mockReturnValue(22.99),
-  isCCBalanceProtectionAge: jest.fn().mockReturnValue(false),
-}));
-
-describe("CreditCardAccountDetailMapper", () => {
-  const cardNumber = "5524890000109322";
-  const creditCardDetailResponse = retailCreditCardDetailResponse;
-  const customerDetailResponse = retailCustomerDetailResponse;
-  const correlationId = "asd-asd-234-23sd-as32-as";
-  const mockBin = {
-    binRangeStart: "552489",
-    binRangeEnd: "552489",
-    cardBrand: "Mastercard",
-    cardType: "Credit",
-    productName: "Test Card",
-  };
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  describe("mapRetailCreditCardAccountDetail", () => {
-    it("should map retail credit card account detail correctly with undefined availableCredit", () => {
-      // Act
-      const result = CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
-        cardNumber,
-        creditCardDetailResponse,
-        customerDetailResponse,
-        correlationId,
-        mockBin,
-        undefined,
-        undefined,
-        true // Set dilEligibility to true
-      );
-
-      // Assert
-      expect(result.accountNumber).toBe(creditCardDetailResponse.cardNumber);
-      expect(result.tsys).toBe(creditCardDetailResponse.owningSystem === 'T');
-      expect(result.allowInstallmentLending).toBe(true);
-    });
-
-    it("should map retail credit card account detail correctly with provided availableCredit", () => {
-      // Arrange
-      const availableCredit = 1200.45;
-      
-      // Act
-      const result = CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
-        cardNumber,
-        creditCardDetailResponse,
-        customerDetailResponse,
-        correlationId,
-        mockBin,
-        availableCredit,
-        undefined,
-        false // Set dilEligibility to false
-      );
-
-      // Assert
-      expect(result).toBeDefined();
-      expect(result.availableCredit).toBe(availableCredit);
-      expect(result.allowInstallmentLending).toBe(false);
-    });
-
-    it("should successfully map all required fields in the account detail", () => {
-      // Act
-      const result = CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
-        cardNumber,
-        creditCardDetailResponse,
-        customerDetailResponse,
-        correlationId,
-        mockBin,
-        undefined,
-        undefined,
-        true // Set dilEligibility to true
-      );
-
-      // Assert
-      expect(result).toBeDefined();
-      expect(result.accountNumber).toBeDefined();
-      expect(result.cardHolderName).toBeDefined();
-      expect(result.cardHolderType).toBe(ApiConstants.CARD_HOLDER_TYPE_OWNER);
-      expect(result.creditLimit).toBeDefined();
-      expect(result.currentBalance).toBeDefined();
-      expect(result.isPrimaryCard).toBe(true);
-      expect(result.additionalSecondaryCards).toEqual([]);
-      expect(result.ownerInd).toBe(ApiConstants.OWNER_IND_RETAIL);
-      expect(result.allowInstallmentLending).toBe(true);
-    });
-
-    it("should set allowInstallmentLending to false when dilEligibility is false", () => {
-      // Act
-      const result = CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
-        cardNumber,
-        creditCardDetailResponse,
-        customerDetailResponse,
-        correlationId,
-        mockBin,
-        undefined,
-        undefined,
-        false
-      );
-
-      // Assert
-      expect(result.allowInstallmentLending).toBe(false);
-    });
-
-    it("should use default value for allowInstallmentLending when dilEligibility is not provided", () => {
-      // Act
-      const result = CreditCardAccountDetailMapper.mapRetailCreditCardAccountDetail(
-        cardNumber,
-        creditCardDetailResponse,
-        customerDetailResponse,
-        correlationId,
-        mockBin
-      );
-
-      // Assert
-      expect(result).toBeDefined();
-      // The default value in the implementation is undefined, so test accordingly
-      expect(result.allowInstallmentLending).toBeUndefined();
-    });
-  });
-
-  describe("getAvailableCredit", () => {
-    it("should return correct available credit when response is provided", () => {
-      // Arrange
-      const mockResponse = {
-        realTimeAuthorizationInfo: {
-          available: {
-            monetaryAmountOfCreditAvailable: { value: 10000 },
-            monetaryAmountOfCreditAvailablePad: { value: 3000 },
-          },
-        },
-      };
-
-      // Act
-      const result = CreditCardAccountDetailMapper.getAvailableCredit(mockResponse as any);
-
-      // Assert
-      expect(result).toBe(7000);
-    });
-
-    it("should return 0 when response is undefined", () => {
-      // Act
-      const result = CreditCardAccountDetailMapper.getAvailableCredit(undefined);
-
-      // Assert
-      expect(result).toBe(0);
-    });
-  });
-});
+public void calculateCommission(Policy policy, Map<String, Object> htPolicy) {
+    try {
+        List<Location> locList = policy.getLocationList();
+        Map<Double, Double> comMap = new HashMap<>();
+        
+        // Process each location
+        locList.forEach(loc -> {
+            Map<String, LocationValue> locVal = loc.getLocationValues();
+            
+            // Process each location value
+            locVal.forEach((key, locValue) -> {
+                double locValComm = 0.0;
+                try {
+                    if (locValue != null && locValue.getLocCommision() != null && 
+                        !locValue.getLocCommision().trim().isEmpty()) {
+                        locValComm = Double.parseDouble(locValue.getLocCommision().trim());
+                    }
+                } catch (NumberFormatException e) {
+                    log.error("Invalid location commission value: " + locValue.getLocCommision());
+                }
+                
+                double locValPrem = 0.0;
+                try {
+                    if (locValue != null && locValue.getLocPremium() != null && 
+                        !locValue.getLocPremium().trim().isEmpty()) {
+                        locValPrem = Double.parseDouble(locValue.getLocPremium().trim());
+                    }
+                } catch (NumberFormatException e) {
+                    log.error("Invalid location premium value: " + locValue.getLocPremium());
+                }
+                
+                // Aggregate premiums by commission rate
+                comMap.compute(locValComm, (k, v) -> (v == null ? 0d : v) + locValPrem);
+            });
+        });
+        
+        // Populate the result map
+        int i = 0;
+        for (Map.Entry<Double, Double> entry : comMap.entrySet()) {
+            htPolicy.put("feerate" + i, entry.getKey());
+            htPolicy.put("premium" + i, entry.getValue());
+            i++;
+        }
+    } catch (Exception e) {
+        log.error("ERROR: IICESSGI Util: calculateCommission", e);
+    }
+}
