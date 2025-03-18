@@ -4,12 +4,15 @@ public void calculateCommission(Policy policy, Map<String, Object> htPolicy) {
         Map<Double, Double> comMap = new HashMap<>();
         
         // Process each location
-        locList.forEach(loc -> {
+        for (Location loc : locList) {
             Map<String, LocationValue> locVal = loc.getLocationValues();
             
             // Process each location value
-            locVal.forEach((key, locValue) -> {
+            for (Map.Entry<String, LocationValue> entry : locVal.entrySet()) {
+                LocationValue locValue = entry.getValue();
                 double locValComm = 0.0;
+                double locValPrem = 0.0;
+                
                 try {
                     if (locValue != null && locValue.getLocCommision() != null && 
                         !locValue.getLocCommision().trim().isEmpty()) {
@@ -19,7 +22,6 @@ public void calculateCommission(Policy policy, Map<String, Object> htPolicy) {
                     log.error("Invalid location commission value: " + locValue.getLocCommision());
                 }
                 
-                double locValPrem = 0.0;
                 try {
                     if (locValue != null && locValue.getLocPremium() != null && 
                         !locValue.getLocPremium().trim().isEmpty()) {
@@ -29,10 +31,15 @@ public void calculateCommission(Policy policy, Map<String, Object> htPolicy) {
                     log.error("Invalid location premium value: " + locValue.getLocPremium());
                 }
                 
-                // Aggregate premiums by commission rate
-                comMap.compute(locValComm, (k, v) -> (v == null ? 0d : v) + locValPrem);
-            });
-        });
+                // Aggregate premiums by commission rate without using lambda
+                Double currentValue = comMap.get(locValComm);
+                if (currentValue == null) {
+                    comMap.put(locValComm, locValPrem);
+                } else {
+                    comMap.put(locValComm, currentValue + locValPrem);
+                }
+            }
+        }
         
         // Populate the result map
         int i = 0;
