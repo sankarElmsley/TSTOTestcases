@@ -1,54 +1,70 @@
+/**
+ * Calculates commission values based on policy location data and populates the provided map.
+ * This method replaces the previous database query approach with direct model object processing.
+ * @param policy Policy object containing location data
+ * @param htPolicy Map to be populated with commission rates and premium values
+ */
 public void calculateCommission(Policy policy, Map<String, Object> htPolicy) {
     try {
+        // Input validation - early return if policy or location list is missing
+        if (policy == null || policy.getLocationList() == null || policy.getLocationList().isEmpty()) {
+            return;
+        }
+        
         List<Location> locList = policy.getLocationList();
+        
+        // Map to aggregate premiums by commission rate
+        // Key: commission rate, Value: sum of premiums for that rate
         Map<Double, Double> comMap = new HashMap<>();
         
-        // Process each location
-        for (Location loc : locList) {
-            Map<String, LocationValue> locVal = loc.getLocationValues();
-            
-            // Process each location value
-            for (Map.Entry<String, LocationValue> entry : locVal.entrySet()) {
-                LocationValue locValue = entry.getValue();
-                double locValComm = 0.0;
-                double locValPrem = 0.0;
+        // Process each location in the policy
+        locList.forEach(loc -> {
+            // Skip processing if location or its values are missing
+            if (loc != null && loc.getLocationValues() != null && !loc.getLocationValues().isEmpty()) {
+                Map<String, LocationValue> locVal = loc.getLocationValues();
                 
-                try {
-                    if (locValue != null && locValue.getLocCommision() != null && 
-                        !locValue.getLocCommision().trim().isEmpty()) {
-                        locValComm = Double.parseDouble(locValue.getLocCommision().trim());
+                // Process each location value entry
+                locVal.forEach((key, locValue) -> {
+                    // Extract commission rate with validation
+                    double locValComm = 0.0;
+                    try {
+                        if (locValue != null && locValue.getLocCommision() != null && 
+                            !locValue.getLocCommision().trim().isEmpty()) {
+                            locValComm = Double.parseDouble(locValue.getLocCommision().trim());
+                        }
+                    } catch (NumberFormatException e) {
+                        log.error("Invalid location commission value: " + locValue.getLocCommision());
                     }
-                } catch (NumberFormatException e) {
-                    log.error("Invalid location commission value: " + locValue.getLocCommision());
-                }
-                
-                try {
-                    if (locValue != null && locValue.getLocPremium() != null && 
-                        !locValue.getLocPremium().trim().isEmpty()) {
-                        locValPrem = Double.parseDouble(locValue.getLocPremium().trim());
+                    
+                    // Extract premium value with validation - using array for lambda final variable requirement
+                    final double[] locValPrem = {0.0};
+                    try {
+                        if (locValue != null && locValue.getLocPremium() != null && 
+                            !locValue.getLocPremium().trim().isEmpty()) {
+                            locValPrem[0] = Double.parseDouble(locValue.getLocPremium().trim());
+                        }
+                    } catch (NumberFormatException e) {
+                        log.error("Invalid location premium value: " + locValue.getLocPremium());
                     }
-                } catch (NumberFormatException e) {
-                    log.error("Invalid location premium value: " + locValue.getLocPremium());
-                }
-                
-                // Aggregate premiums by commission rate without using lambda
-                Double currentValue = comMap.get(locValComm);
-                if (currentValue == null) {
-                    comMap.put(locValComm, locValPrem);
-                } else {
-                    comMap.put(locValComm, currentValue + locValPrem);
-                }
+                    
+                    // Aggregate premium values by commission rate
+                    // This mimics the SQL GROUP BY and SUM functionality
+                    comMap.compute(locValComm, (k, v) -> (v == null ? 0d : v) + locValPrem[0]);
+                });
             }
-        }
+        });
         
-        // Populate the result map
-        int i = 0;
-        for (Map.Entry<Double, Double> entry : comMap.entrySet()) {
-            htPolicy.put("feerate" + i, entry.getKey());
-            htPolicy.put("premium" + i, entry.getValue());
-            i++;
-        }
+        // Populate the result map with sequential index (equivalent to row number in SQL results)
+        final int[] index = {0};
+        comMap.forEach((commRate, premium) -> {
+            // Store values using the same key format as the original SQL-based method
+            htPolicy.put("feerate" + index[0], commRate);
+            htPolicy.put("premium" + index[0], premium);
+            index[0]++;
+        });
+        
     } catch (Exception e) {
-        log.error("ERROR: IICESSGI Util: calculateCommission", e);
+        // Log any unexpected errors
+        log.error("Error calculating commission", e);
     }
 }
