@@ -68,3 +68,9 @@ public void calculateCommission(Policy policy, Map<String, Object> htPolicy) {
         log.error("Error calculating commission", e);
     }
 }
+
+
+
+The controller is then calling an external service at https://cgsg-in-sit2.bmogc.net:8106/esbapi/party/bmopartyconsent/v1/getbmoprocessingpurpose
+The external service is returning a 500 Internal Server Error
+When trying to parse the error response, the system is failing with: HUB.ADAPTER.SYSERROR: Can not parse error code from error response
