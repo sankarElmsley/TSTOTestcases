@@ -41,3 +41,40 @@ This explains why our Tomcat pool configurations aren't taking effect. To resolv
         </exclusion>
     </exclusions>
 </dependency>
+
+
+spring.datasource.hikari.connection-timeout=20000
+spring.datasource.hikari.maximum-pool-size=50
+spring.datasource.hikari.minimum-idle=15
+spring.datasource.hikari.idle-timeout=60000
+
+spring.datasource2.hikari.connection-timeout=20000
+spring.datasource2.hikari.maximum-pool-size=50
+spring.datasource2.hikari.minimum-idle=15
+spring.datasource2.hikari.idle-timeout=60000
+
+
+The mapping between Tomcat and HikariCP properties:
+
+spring.datasource.tomcat.max-wait=20000 → spring.datasource.hikari.connection-timeout=20000
+
+This is the maximum time in milliseconds to wait for a connection from the pool
+
+
+spring.datasource.tomcat.max-active=50 → spring.datasource.hikari.maximum-pool-size=50
+
+This is the maximum number of active connections that can be allocated from the pool at the same time
+
+
+spring.datasource.tomcat.min-idle=15 → spring.datasource.hikari.minimum-idle=15
+
+This is the minimum number of connections that should be kept in the pool at all times
+
+
+spring.datasource.tomcat.max-idle=20 → No direct equivalent in HikariCP
+
+However, HikariCP manages idle connections differently - it always tries to maintain at least minimum-idle connections and will remove connections above this number after they've been idle for longer than idle-timeout
+
+
+
+The idle-timeout value of 60000ms (60 seconds) I've included is standard for HikariCP but can be adjusted based on your application's needs.
