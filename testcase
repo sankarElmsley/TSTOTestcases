@@ -1,14 +1,23 @@
 <settings>
+  <mirrors>
+    <!-- Redirect all staging repository requests to QA -->
+    <mirror>
+      <id>block-staging</id>
+      <mirrorOf>channels-repository</mirrorOf>
+      <url>https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-Releases</url>
+    </mirror>
+  </mirrors>
+  
   <servers>
     <server>
       <id>opbk-86836-Maven-Releases</id>
-      <username>your-username</username>
-      <password>your-password</password>
+      <username>your-qa-username</username>
+      <password>your-qa-password</password>
     </server>
     <server>
       <id>opbk-86836-Maven-Snapshots</id>
-      <username>your-username</username>
-      <password>your-password</password>
+      <username>your-qa-username</username>
+      <password>your-qa-password</password>
     </server>
   </servers>
   
@@ -16,6 +25,7 @@
     <profile>
       <id>artifactory</id>
       <repositories>
+        <!-- QA repositories -->
         <repository>
           <id>opbk-86836-Maven-Releases</id>
           <name>OPBK Releases</name>
@@ -38,6 +48,19 @@
             <enabled>true</enabled>
           </snapshots>
         </repository>
+        
+        <!-- Explicitly disable staging repository -->
+        <repository>
+          <id>channels-repository</id>
+          <name>Channels Staging Repository</name>
+          <url>https://bmostaging.jfrog.io/artifactory/ChannelServicesMaster-Maven-Virtual</url>
+          <releases>
+            <enabled>false</enabled>
+          </releases>
+          <snapshots>
+            <enabled>false</enabled>
+          </snapshots>
+        </repository>
       </repositories>
       
       <pluginRepositories>
@@ -45,12 +68,6 @@
           <id>plugins-release</id>
           <name>plugins-release</name>
           <url>https://artifactory-qa.bmogc.net/artifactory/plugins-release</url>
-          <releases>
-            <enabled>true</enabled>
-          </releases>
-          <snapshots>
-            <enabled>false</enabled>
-          </snapshots>
         </pluginRepository>
       </pluginRepositories>
     </profile>
@@ -60,5 +77,3 @@
     <activeProfile>artifactory</activeProfile>
   </activeProfiles>
 </settings>
-
-mvn dependency:get -DgroupId=com.bmo.channels -DartifactId=channels-api-authentication -Dversion=4.0.40 -DremoteRepositories=https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-Releases
