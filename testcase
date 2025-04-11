@@ -1,10 +1,10 @@
 <settings>
   <mirrors>
-    <!-- Redirect all staging repository requests to QA -->
+    <!-- Redirect all staging repository requests to your QA virtual repository -->
     <mirror>
       <id>block-staging</id>
       <mirrorOf>channels-repository</mirrorOf>
-      <url>https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-Releases</url>
+      <url>https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-Virtual</url>
     </mirror>
   </mirrors>
   
@@ -19,13 +19,41 @@
       <username>your-qa-username</username>
       <password>your-qa-password</password>
     </server>
+    <server>
+      <id>opbk-86836-Maven-Virtual</id>
+      <username>your-qa-username</username>
+      <password>your-qa-password</password>
+    </server>
+    <server>
+      <id>opbk-86836-Maven-ReleaseCandidates</id>
+      <username>your-qa-username</username>
+      <password>your-qa-password</password>
+    </server>
+    <server>
+      <id>opbk-86836-Maven-PrivateDependencies</id>
+      <username>your-qa-username</username>
+      <password>your-qa-password</password>
+    </server>
   </servers>
   
   <profiles>
     <profile>
       <id>artifactory</id>
       <repositories>
-        <!-- QA repositories -->
+        <!-- Virtual repository that might aggregate multiple repositories -->
+        <repository>
+          <id>opbk-86836-Maven-Virtual</id>
+          <name>OPBK Virtual Repository</name>
+          <url>https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-Virtual</url>
+          <releases>
+            <enabled>true</enabled>
+          </releases>
+          <snapshots>
+            <enabled>true</enabled>
+          </snapshots>
+        </repository>
+        
+        <!-- Standard repositories -->
         <repository>
           <id>opbk-86836-Maven-Releases</id>
           <name>OPBK Releases</name>
@@ -43,6 +71,32 @@
           <url>https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-Snapshots</url>
           <releases>
             <enabled>false</enabled>
+          </releases>
+          <snapshots>
+            <enabled>true</enabled>
+          </snapshots>
+        </repository>
+        
+        <!-- Release candidates repository -->
+        <repository>
+          <id>opbk-86836-Maven-ReleaseCandidates</id>
+          <name>OPBK Release Candidates</name>
+          <url>https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-ReleaseCandidates</url>
+          <releases>
+            <enabled>true</enabled>
+          </releases>
+          <snapshots>
+            <enabled>false</enabled>
+          </snapshots>
+        </repository>
+        
+        <!-- Private dependencies repository -->
+        <repository>
+          <id>opbk-86836-Maven-PrivateDependencies</id>
+          <name>OPBK Private Dependencies</name>
+          <url>https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-PrivateDependencies</url>
+          <releases>
+            <enabled>true</enabled>
           </releases>
           <snapshots>
             <enabled>true</enabled>
@@ -68,6 +122,12 @@
           <id>plugins-release</id>
           <name>plugins-release</name>
           <url>https://artifactory-qa.bmogc.net/artifactory/plugins-release</url>
+          <releases>
+            <enabled>true</enabled>
+          </releases>
+          <snapshots>
+            <enabled>false</enabled>
+          </snapshots>
         </pluginRepository>
       </pluginRepositories>
     </profile>
