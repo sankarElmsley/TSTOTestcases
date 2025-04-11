@@ -1,80 +1,62 @@
-To use Tomcat connection pool instead of HikariCP, you need to:
-
-Exclude HikariCP from your Spring Boot starter dependencies
-Add the Tomcat JDBC connection pool dependency
-
-Add these to your pom.xml (if using Maven):
-
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-jdbc</artifactId>
-    <exclusions>
-        <exclusion>
-            <groupId>com.zaxxer</groupId>
-            <artifactId>HikariCP</artifactId>
-        </exclusion>
-    </exclusions>
-</dependency>
-<dependency>
-    <groupId>org.apache.tomcat</groupId>
-    <artifactId>tomcat-jdbc</artifactId>
-</dependency>
-
-In all Spring Boot 2.x versions (2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.0, etc.), HikariCP is the default connection pool unless explicitly overridden as I showed in the previous response.
-
-After investigating, I found that this behavior occurs because:
-
-1. Our application uses Spring Boot 2.x, which defaults to HikariCP as its connection pool.
-2. Even though we've defined Tomcat connection pool properties, Spring Boot is ignoring these in favor of HikariCP because we haven't explicitly excluded HikariCP from our dependencies.
-
-This explains why our Tomcat pool configurations aren't taking effect. To resolve this and use the Tomcat connection pool as intended, we need to update our POM file with the following changes:
-
-1. Exclude HikariCP from spring-boot-starter-jdbc:
-```xml
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-jdbc</artifactId>
-    <exclusions>
-        <exclusion>
-            <groupId>com.zaxxer</groupId>
-            <artifactId>HikariCP</artifactId>
-        </exclusion>
-    </exclusions>
-</dependency>
-
-
-spring.datasource.hikari.connection-timeout=20000
-spring.datasource.hikari.maximum-pool-size=50
-spring.datasource.hikari.minimum-idle=15
-spring.datasource.hikari.idle-timeout=60000
-
-spring.datasource2.hikari.connection-timeout=20000
-spring.datasource2.hikari.maximum-pool-size=50
-spring.datasource2.hikari.minimum-idle=15
-spring.datasource2.hikari.idle-timeout=60000
-
-
-The mapping between Tomcat and HikariCP properties:
-
-spring.datasource.tomcat.max-wait=20000 → spring.datasource.hikari.connection-timeout=20000
-
-This is the maximum time in milliseconds to wait for a connection from the pool
-
-
-spring.datasource.tomcat.max-active=50 → spring.datasource.hikari.maximum-pool-size=50
-
-This is the maximum number of active connections that can be allocated from the pool at the same time
-
-
-spring.datasource.tomcat.min-idle=15 → spring.datasource.hikari.minimum-idle=15
-
-This is the minimum number of connections that should be kept in the pool at all times
-
-
-spring.datasource.tomcat.max-idle=20 → No direct equivalent in HikariCP
-
-However, HikariCP manages idle connections differently - it always tries to maintain at least minimum-idle connections and will remove connections above this number after they've been idle for longer than idle-timeout
-
-
-
-The idle-timeout value of 60000ms (60 seconds) I've included is standard for HikariCP but can be adjusted based on your application's needs.
+<settings>
+  <servers>
+    <server>
+      <id>opbk-86836-Maven-Releases</id>
+      <username>your-username</username>
+      <password>your-password</password>
+    </server>
+    <server>
+      <id>opbk-86836-Maven-Snapshots</id>
+      <username>your-username</username>
+      <password>your-password</password>
+    </server>
+  </servers>
+  
+  <profiles>
+    <profile>
+      <id>artifactory</id>
+      <repositories>
+        <repository>
+          <id>opbk-86836-Maven-Releases</id>
+          <name>OPBK Releases</name>
+          <url>https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-Releases</url>
+          <releases>
+            <enabled>true</enabled>
+          </releases>
+          <snapshots>
+            <enabled>false</enabled>
+          </snapshots>
+        </repository>
+        <repository>
+          <id>opbk-86836-Maven-Snapshots</id>
+          <name>OPBK Snapshots</name>
+          <url>https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-Snapshots</url>
+          <releases>
+            <enabled>false</enabled>
+          </releases>
+          <snapshots>
+            <enabled>true</enabled>
+          </snapshots>
+        </repository>
+      </repositories>
+      
+      <pluginRepositories>
+        <pluginRepository>
+          <id>plugins-release</id>
+          <name>plugins-release</name>
+          <url>https://artifactory-qa.bmogc.net/artifactory/plugins-release</url>
+          <releases>
+            <enabled>true</enabled>
+          </releases>
+          <snapshots>
+            <enabled>false</enabled>
+          </snapshots>
+        </pluginRepository>
+      </pluginRepositories>
+    </profile>
+  </profiles>
+  
+  <activeProfiles>
+    <activeProfile>artifactory</activeProfile>
+  </activeProfiles>
+</settings>
