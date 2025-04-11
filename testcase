@@ -60,3 +60,5 @@
     <activeProfile>artifactory</activeProfile>
   </activeProfiles>
 </settings>
+
+mvn dependency:get -DgroupId=com.bmo.channels -DartifactId=channels-api-authentication -Dversion=4.0.40 -DremoteRepositories=https://artifactory-qa.bmogc.net/artifactory/opbk-86836-Maven-Releases
