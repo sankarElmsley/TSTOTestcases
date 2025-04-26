@@ -1,1 +1,61 @@
+# Temporary Password Authentication Flow: Technical Summary
 
+## Overview
+
+The BMO authentication system implements a distinct temporary password flow that operates independently from regular password authentication. This flow uses dedicated database procedures and early-exit mechanisms to quickly identify and handle temporary password scenarios.
+
+## Key Flow Components
+
+1. **Detection Mechanism**:
+   - Every authentication attempt first checks for temporary passwords
+   - Uses dedicated stored procedure `OLB_PASSWORD_RESET_PRG.PASSWORDRESET_SSP`
+   - Temporary passwords are stored separately from regular credentials
+
+2. **Flow Separation**:
+   - When a temporary password is detected, the authentication flow immediately exits via exception
+   - No further validation or service calls (like PartyIdentification) occur
+   - Different exception codes distinguish between expired (906) and active (605) temporary passwords
+
+3. **Client Redirection**:
+   - Exception codes serve as signals to the client application
+   - Clients receive specific error codes that trigger redirection to password reset pages
+   - Events are published with reason codes "ExpiredTemporaryPswd" or "TemporaryPswd"
+
+## Implementation Details
+
+```java
+// Check for temporary password first (always)
+tempPasswordInfo = authenticatorDao.findTemporaryPassword(validateUser.getUsername());
+
+if (tempPasswordInfo != null) {
+    // Determine if expired
+    if (tempPasswordInfo.getExpiryDate() != null && todayDate.after(tempPasswordInfo.getExpiryDate())) {
+        // Return expired temporary password response (code 906)
+        throw new AuthenticationException(EXP_TEMP_PSWD, ...);
+    } else {
+        // Return active temporary password response (code 605)
+        throw new AuthenticationException(ErrorCodeDTO._605.toString(), ...);
+    }
+    // Flow terminates here due to exception - no further processing
+}
+
+// Only if no temporary password exists, proceed with regular authentication
+```
+
+## Efficiency Considerations
+
+- The system checks for temporary passwords on every authentication attempt
+- This introduces an extra database call for users with regular passwords
+- Design prioritizes correctness and security over optimization
+
+## Integration Notes
+
+For technical architects working on the system:
+
+1. The temporary password flow should remain separate from regular authentication
+2. Ensure client applications correctly interpret error codes 605 and 906
+3. Maintain the early-exit approach to prevent unnecessary service calls
+4. Consider caching strategies if temporary password checks impact performance
+5. When integrating with third-party systems (like Intuit), ensure temporary password errors are properly propagated
+
+This temporary password implementation provides a secure mechanism for password resets while maintaining clear separation from regular authentication flows.
