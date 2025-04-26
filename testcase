@@ -1,61 +1,62 @@
-# Temporary Password Authentication Flow: Technical Summary
+Based on the additional log you've provided, I can see an important error related to customer type restrictions. Let me provide clarification on this point.
 
-## Overview
+## Clarification on Customer Type Restrictions
 
-The BMO authentication system implements a distinct temporary password flow that operates independently from regular password authentication. This flow uses dedicated database procedures and early-exit mechanisms to quickly identify and handle temporary password scenarios.
+Looking at the log and previous code, I can identify that:
 
-## Key Flow Components
+1. **Error in the Log**:
+   ```
+   "logLevel": "ERROR", "additionalInfo": " (EVENT FAILURE Anonymous: null@unknown - /BMOAPI/com.bmo.channels.api.authentication.helper.AuthenticationServiceHelper] Class: AuthenticationServiceHelperMethod: isBinMatchFound, Event: FBC number entered falls in rejected bin range: 6"
+   ```
 
-1. **Detection Mechanism**:
-   - Every authentication attempt first checks for temporary passwords
-   - Uses dedicated stored procedure `OLB_PASSWORD_RESET_PRG.PASSWORDRESET_SSP`
-   - Temporary passwords are stored separately from regular credentials
+2. **Customer Type Restriction in Code**:
+   ```java
+   @Value ("$(api.bank.allowed.customertypes) *)
+   private String[] customerTypes;
+   
+   public boolean checkCustomerType(String customerType, String detailsToLog, String deviceTokenCookie) {
+       boolean validType = false;
+       
+       for (String custType : customerTypes) {
+           if (customerType.equalsIgnoreCase(custType)) {
+               validType = true;
+               break;
+           }
+       }
+       
+       if (!validType) {
+           logger.error("|Authentication Rejected, Reason: customerType not supported. |" + detailsToLog + "|");
+           throw new AuthenticationException(
+                   ErrorCodeDTO._606.toString(),
+                   MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._606.toString()),
+                   deviceTokenCookie
+           );
+       }
+       
+       return validType;
+   }
+   ```
 
-2. **Flow Separation**:
-   - When a temporary password is detected, the authentication flow immediately exits via exception
-   - No further validation or service calls (like PartyIdentification) occur
-   - Different exception codes distinguish between expired (906) and active (605) temporary passwords
+3. **Configuration Setting**:
+   As you mentioned, the configuration has `api.bank.allowed.customerTypes=O` where "O" appears to represent "Organizations" or small business customers.
 
-3. **Client Redirection**:
-   - Exception codes serve as signals to the client application
-   - Clients receive specific error codes that trigger redirection to password reset pages
-   - Events are published with reason codes "ExpiredTemporaryPswd" or "TemporaryPswd"
+## Clarification Summary
 
-## Implementation Details
+1. **Customer Type Restriction**:
+   - The current implementation is configured to only allow Organization/Business customers (customerType = "O")
+   - Retail customers would be rejected by the `checkCustomerType` method with error code 606
+   - This is separate from the temporary password handling logic
 
-```java
-// Check for temporary password first (always)
-tempPasswordInfo = authenticatorDao.findTemporaryPassword(validateUser.getUsername());
+2. **BIN Range Validation Error**:
+   - The error in the log shows a rejection based on BIN (Bank Identification Number) range
+   - The error occurs in method `isBinMatchFound` with the message "FBC number entered falls in rejected bin range: 6"
+   - This suggests the card number's BIN prefix is not in the allowed ranges for this authentication service
 
-if (tempPasswordInfo != null) {
-    // Determine if expired
-    if (tempPasswordInfo.getExpiryDate() != null && todayDate.after(tempPasswordInfo.getExpiryDate())) {
-        // Return expired temporary password response (code 906)
-        throw new AuthenticationException(EXP_TEMP_PSWD, ...);
-    } else {
-        // Return active temporary password response (code 605)
-        throw new AuthenticationException(ErrorCodeDTO._605.toString(), ...);
-    }
-    // Flow terminates here due to exception - no further processing
-}
+3. **Temporary Password Flow with Customer Type Restrictions**:
+   - The temporary password flow would still work as previously described
+   - However, it would only process requests for allowed customer types (currently only "O")
+   - Retail customers would be rejected before the temporary password check occurs
 
-// Only if no temporary password exists, proceed with regular authentication
-```
+This confirms that the authentication service is currently restricted to business/organization customers, and appears to be rejecting certain card BIN ranges that don't match the allowed configurations.
 
-## Efficiency Considerations
-
-- The system checks for temporary passwords on every authentication attempt
-- This introduces an extra database call for users with regular passwords
-- Design prioritizes correctness and security over optimization
-
-## Integration Notes
-
-For technical architects working on the system:
-
-1. The temporary password flow should remain separate from regular authentication
-2. Ensure client applications correctly interpret error codes 605 and 906
-3. Maintain the early-exit approach to prevent unnecessary service calls
-4. Consider caching strategies if temporary password checks impact performance
-5. When integrating with third-party systems (like Intuit), ensure temporary password errors are properly propagated
-
-This temporary password implementation provides a secure mechanism for password resets while maintaining clear separation from regular authentication flows.
+The temporary password flow remains independent of regular password authentication, but both are subject to the customer type restrictions configured in the system.
