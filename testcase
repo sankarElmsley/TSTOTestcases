@@ -1,62 +1,29 @@
-Based on the additional log you've provided, I can see an important error related to customer type restrictions. Let me provide clarification on this point.
+Here's a clear, understandable summary of the authentication flows:
 
-## Clarification on Customer Type Restrictions
+## Authentication Flow Summary
 
-Looking at the log and previous code, I can identify that:
+### Current Authentication Process
+1. User provides card number and password
+2. System retrieves credential information to determine credential type
+3. Based on credential type, system chooses one of two authentication paths:
 
-1. **Error in the Log**:
-   ```
-   "logLevel": "ERROR", "additionalInfo": " (EVENT FAILURE Anonymous: null@unknown - /BMOAPI/com.bmo.channels.api.authentication.helper.AuthenticationServiceHelper] Class: AuthenticationServiceHelperMethod: isBinMatchFound, Event: FBC number entered falls in rejected bin range: 6"
-   ```
+### Legacy Authentication Path
+1. System determines credential is legacy type (credentialType = 1)
+2. Creates legacy authentication request with user's card number and password
+3. Calls legacy authentication service
+4. Validates credentials using legacy authentication protocols
+5. Returns authentication result (success/failure)
 
-2. **Customer Type Restriction in Code**:
-   ```java
-   @Value ("$(api.bank.allowed.customertypes) *)
-   private String[] customerTypes;
-   
-   public boolean checkCustomerType(String customerType, String detailsToLog, String deviceTokenCookie) {
-       boolean validType = false;
-       
-       for (String custType : customerTypes) {
-           if (customerType.equalsIgnoreCase(custType)) {
-               validType = true;
-               break;
-           }
-       }
-       
-       if (!validType) {
-           logger.error("|Authentication Rejected, Reason: customerType not supported. |" + detailsToLog + "|");
-           throw new AuthenticationException(
-                   ErrorCodeDTO._606.toString(),
-                   MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._606.toString()),
-                   deviceTokenCookie
-           );
-       }
-       
-       return validType;
-   }
-   ```
+### Hash Authentication Path
+1. System determines credential is modern type (credentialType = 2)
+2. Creates hash authentication request with user's card number and password
+3. Calls hash authentication service
+4. Validates credentials using secure hash-based authentication
+5. Returns authentication result (success/failure)
 
-3. **Configuration Setting**:
-   As you mentioned, the configuration has `api.bank.allowed.customerTypes=O` where "O" appears to represent "Organizations" or small business customers.
+### Post-Authentication
+1. If authentication successful, creates password info object with status details
+2. If authentication fails, checks failure reason (invalid password, account locked, etc.)
+3. Returns final authentication result to calling application
 
-## Clarification Summary
-
-1. **Customer Type Restriction**:
-   - The current implementation is configured to only allow Organization/Business customers (customerType = "O")
-   - Retail customers would be rejected by the `checkCustomerType` method with error code 606
-   - This is separate from the temporary password handling logic
-
-2. **BIN Range Validation Error**:
-   - The error in the log shows a rejection based on BIN (Bank Identification Number) range
-   - The error occurs in method `isBinMatchFound` with the message "FBC number entered falls in rejected bin range: 6"
-   - This suggests the card number's BIN prefix is not in the allowed ranges for this authentication service
-
-3. **Temporary Password Flow with Customer Type Restrictions**:
-   - The temporary password flow would still work as previously described
-   - However, it would only process requests for allowed customer types (currently only "O")
-   - Retail customers would be rejected before the temporary password check occurs
-
-This confirms that the authentication service is currently restricted to business/organization customers, and appears to be rejecting certain card BIN ranges that don't match the allowed configurations.
-
-The temporary password flow remains independent of regular password authentication, but both are subject to the customer type restrictions configured in the system.
+This dual-path approach allows the system to support both older legacy credentials and newer hash-based authentication methods within the same authentication framework.
