@@ -1,29 +1,69 @@
-Here's a clear, understandable summary of the authentication flows:
-
-## Authentication Flow Summary
-
-### Current Authentication Process
-1. User provides card number and password
-2. System retrieves credential information to determine credential type
-3. Based on credential type, system chooses one of two authentication paths:
-
-### Legacy Authentication Path
-1. System determines credential is legacy type (credentialType = 1)
-2. Creates legacy authentication request with user's card number and password
-3. Calls legacy authentication service
-4. Validates credentials using legacy authentication protocols
-5. Returns authentication result (success/failure)
-
-### Hash Authentication Path
-1. System determines credential is modern type (credentialType = 2)
-2. Creates hash authentication request with user's card number and password
-3. Calls hash authentication service
-4. Validates credentials using secure hash-based authentication
-5. Returns authentication result (success/failure)
-
-### Post-Authentication
-1. If authentication successful, creates password info object with status details
-2. If authentication fails, checks failure reason (invalid password, account locked, etc.)
-3. Returns final authentication result to calling application
-
-This dual-path approach allows the system to support both older legacy credentials and newer hash-based authentication methods within the same authentication framework.
+sequenceDiagram
+    autonumber
+    
+    Client->>AuthenticationServiceV2: authenticate(credentials)
+    Note over AuthenticationServiceV2: Generate logging context
+    
+    AuthenticationServiceV2->>ISDSHelper: getIsdsGetCredentialResponse(username)
+    ISDSHelper-->>AuthenticationServiceV2: Return credential info
+    
+    AuthenticationServiceV2->>AuthenticationServiceHelperV2: clientValidations(validateUser, headers)
+    Note over AuthenticationServiceHelperV2: Perform Mod-10 check<br/>Validate BIN range
+    
+    AuthenticationServiceV2->>AuthenticationServiceHelperV2: checkCustomerType(customerType)
+    
+    AuthenticationServiceV2->>ExternalService: Get debit card details
+    ExternalService-->>AuthenticationServiceV2: Return card details
+    
+    AuthenticationServiceV2->>AuthenticationServiceHelperV2: checkCardStatus(cardDetails)
+    
+    alt Retail customer
+        AuthenticationServiceV2->>AuthenticationServiceHelperV2: validateOTPLockStatus()
+    end
+    
+    AuthenticationServiceV2->>ISDSHelper: initialISDSValidations(credential)
+    Note over ISDSHelper: Check if card is suspended
+    
+    AuthenticationServiceV2->>ISDSHelper: isdsValidations(credential, password)
+    ISDSHelper-->>AuthenticationServiceV2: Return authentication result
+    
+    alt Authentication fails
+        AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(FAILURE)
+        AuthenticationServiceV2-->>Client: Return authentication error
+    else Authentication successful
+        AuthenticationServiceV2->>RSAServices: rsaQuery(username)
+        RSAServices-->>AuthenticationServiceV2: Return RSA user status
+        
+        alt RSA status not VERIFIED or DELETED
+            AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(FAILURE)
+            AuthenticationServiceV2-->>Client: Return authentication error
+        else RSA status VERIFIED
+            opt Non-commercial customer
+                AuthenticationServiceV2->>TMXServices: notifyTMX(tmxParam)
+                TMXServices-->>AuthenticationServiceV2: Return fraud assessment
+            end
+            
+            AuthenticationServiceV2->>RSAServices: rsaAnalyze(factData)
+            RSAServices-->>AuthenticationServiceV2: Return risk assessment
+            
+            alt RSA risk policy DENY
+                AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(FAILURE)
+                AuthenticationServiceV2-->>Client: Return authentication error
+            else RSA risk policy CHALLENGE
+                alt Commercial customer
+                    AuthenticationServiceV2->>RSAServices: rsaChallenge()
+                    RSAServices-->>AuthenticationServiceV2: Return challenge details
+                    AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(SUCCESS)
+                    AuthenticationServiceV2-->>Client: Return RSA challenge response
+                else Retail customer
+                    AuthenticationServiceV2->>AuthenticationServiceHelperV2: setAuthenticationResponseHeaderWhenOTPChallenge()
+                    AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(ATTEMPT)
+                    AuthenticationServiceV2-->>Client: Return OTP challenge response
+                end
+            else RSA risk policy ALLOW
+                AuthenticationServiceV2->>AuthenticationServiceHelperV2: setAuthenticationResponseHeaderWhenSkipVerifyChallenge()
+                AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(SUCCESS)
+                AuthenticationServiceV2-->>Client: Return authentication success
+            end
+        end
+    end
