@@ -1,204 +1,116 @@
-sequenceDiagram
-    autonumber
-    
-    actor Client
-    participant AuthSvcV2 as AuthenticationServiceV2
-    participant HelperV2 as AuthenticationServiceHelperV2
-    participant AuthISDSAdapter as AuthenticatorISDS
-    participant ISDSHelp as ISDSHelper
-    participant GetCredSvc as ISDSGetCredentialService
-    participant HashAuthSvc as ISDSHashAuthService
-    participant LegacyAuthSvc as ISDSLegacyAuthService
-    participant AuthDAO as AuthenticatorDAO
-    participant Feign as FeignHttpServiceImpl
-    participant DAO_DB as Database
-    participant ISDS_API as ISDS External API
-    participant RSA_API as RSA Services
-    participant TMX_API as TMX Fraud Service
-    participant CardSvc as Card Services
-    participant EventPub as LoginEventPublisher
-    
-    Client->>AuthSvcV2: authenticate(validateUser, headers)
-    Note over AuthSvcV2: Generate request ID & logging context
-    
-    Note over AuthSvcV2: Create RequestBean, LoginEvent, DBValidationParam, TmxParam
-    
-    AuthSvcV2->>ISDSHelp: getIsdsGetCredentialResponse(username)
-    ISDSHelp->>GetCredSvc: getCredential(GetCredentialRequest, headers, requestId)
-    GetCredSvc->>Feign: isdsGetCredential(request, headers)
-    Feign->>ISDS_API: Call ISDS GetCredential API
-    ISDS_API-->>Feign: Return GetCredentialRestResponseType
-    Feign-->>GetCredSvc: Return credential response
-    GetCredSvc-->>ISDSHelp: Return credential info
-    
-    Note over ISDSHelp: Extract credentialType, credentialStatus, uid
-    ISDSHelp-->>AuthSvcV2: Return credential details
-    
-    Note over AuthSvcV2: Determine if isCardNumberLogin
-    Note over AuthSvcV2: Extract language, deviceToken, hashedFBC
-    
-    AuthSvcV2->>HelperV2: clientValidations(validateUser, restTemplate, referer, reqBean, etc.)
-    Note over HelperV2: Validate username length (16 chars)
-    HelperV2->>HelperV2: mod10Check(validateUser.getUsername())
-    Note over HelperV2: Validate password length (8-13 chars)
-    HelperV2->>HelperV2: checkAccessValidity(restTemplate, validateUser, dbParam, tmxParam, loginEvent)
-    Note over HelperV2: Validate referer URL against allowed values
-    
-    HelperV2->>Feign: creditCardUtilityV3Client.getBinRanges(reqBean)
-    Feign->>CardSvc: Get BIN ranges
-    CardSvc-->>Feign: Return BIN ranges
-    Feign-->>HelperV2: Return BIN list
-    
-    Note over HelperV2: Check if card BIN is in valid range
-    Note over HelperV2: Validate product code if customerIdentifier provided
-    HelperV2-->>AuthSvcV2: Return validation result (true/exception)
-    
-    AuthSvcV2->>Feign: getFinancialSnapshot(requestHeaders, retrievePartyRequest)
-    Feign->>CardSvc: Call RetrievePartySnapshot Service
-    CardSvc-->>Feign: Return RetrievePartyResponse
-    Feign-->>AuthSvcV2: Return party info
-    
-    Note over AuthSvcV2: Extract customerType from response
-    
-    AuthSvcV2->>HelperV2: checkCustomerType(customerType, detailsLogString, deviceTokenCookie)
-    HelperV2-->>AuthSvcV2: Return validation result (true/exception)
-    
-    alt Retail customer
-        AuthSvcV2->>HelperV2: validateOTPLockStatus(username, hashedFBC, reqBean, loginEvent, detailsLogOnly)
-        HelperV2->>Feign: checkOTPLockStatus(body, requestBean)
-        Feign->>CardSvc: Call OTP lock status check service
-        CardSvc-->>Feign: Return lock status
-        Feign-->>HelperV2: Return lock status
-        Note over HelperV2: Throw exception if OTP is locked
-        HelperV2-->>AuthSvcV2: Return if no OTP lock
-    end
-    
-    AuthSvcV2->>HelperV2: initialISDSValidations(loginCredential, dbValidationParam, loginEvent, isdsDto)
-    
-    alt Legacy flow (database validation)
-        AuthSvcV2->>HelperV2: initialDatabaseValidationV2(validateUser, dbValidationParam, loginEvent)
-        HelperV2->>AuthDAO: checkSuspensions(username)
-        AuthDAO->>DAO_DB: Call OLBValidateSuspension_SSP stored procedure
-        DAO_DB-->>AuthDAO: Return suspension status
-        AuthDAO-->>HelperV2: Return suspension check result
-        
-        opt Card is suspended
-            HelperV2->>Feign: rsaNotify(requestDTO)
-            Feign->>RSA_API: Call RSA notify API
-            RSA_API-->>Feign: Return response
-            Feign-->>HelperV2: Return notification result
-            
-            HelperV2->>AuthDAO: checkSuspensionReason(username)
-            AuthDAO->>DAO_DB: Call OIB_NBSUSPENSION_PRG.OLB_NBSUSPENSION_SSP
-            DAO_DB-->>AuthDAO: Return suspension reason
-            AuthDAO-->>HelperV2: Return reason code
-            
-            HelperV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.FAILURE, ...)
-            HelperV2-->>AuthSvcV2: Throw AuthenticationException
-        end
-    end
-    
-    AuthSvcV2->>Feign: getDebitCardDetails(requestHeaders, cardDetailsRequest)
-    Feign->>CardSvc: Call debit card details service
-    CardSvc-->>Feign: Return card details
-    Feign-->>AuthSvcV2: Return GetFullDetailsResponse
-    
-    AuthSvcV2->>HelperV2: checkCardStatus(debitCardDetails.getCardDetails(), detailsLogString, deviceTokenCookie, loginEvent)
-    Note over HelperV2: Check for compromised/captured/inactive cards
-    HelperV2-->>AuthSvcV2: Return validation result (true/exception)
-    
-    Note over AuthSvcV2: Check if tbRegisterDate is null
-    
-    AuthSvcV2->>HelperV2: isdsValidations(null, validateUser, loginCredential, dbValidationParam, tmxParam, loginEvent, isdsDto)
-    
-    alt ISDS Authentication
-        HelperV2->>AuthISDSAdapter: authenticate(cardNumber, password)
-        AuthISDSAdapter->>ISDSHelp: authenticate(cardNumber, password)
-        
-        alt Legacy credential type
-            ISDSHelp->>LegacyAuthSvc: legacyAuth(authenticateUserRequest, headers, requestId)
-            LegacyAuthSvc->>Feign: isdsLegacyAuth(request, headers)
-            Feign->>ISDS_API: Call ISDS Legacy Auth API
-            ISDS_API-->>Feign: Return AuthenticateUserRestResponseType
-            Feign-->>LegacyAuthSvc: Return auth response
-            LegacyAuthSvc-->>ISDSHelp: Return auth result
-        else Hash-based credential type
-            ISDSHelp->>HashAuthSvc: hashAuth(authenticateUserRequest, headers, requestId)
-            HashAuthSvc->>Feign: isdsHashAuth(request, headers)
-            Feign->>ISDS_API: Call ISDS Hash Auth API
-            ISDS_API-->>Feign: Return AuthenticateUserRestResponseType
-            Feign-->>HashAuthSvc: Return auth response
-            HashAuthSvc-->>ISDSHelp: Return auth result
-        end
-        
-        ISDSHelp-->>AuthISDSAdapter: Return AuthenticationResult
-        AuthISDSAdapter-->>HelperV2: Return authentication result
-    else Legacy Database Authentication
-        HelperV2->>AuthDAO: authenticate(cardNumber, password)
-        AuthDAO->>DAO_DB: Call OLB_PASSWORD_ENHANCEMENT_PRG.OLB_Password_SSP procedure
-        DAO_DB-->>AuthDAO: Return authentication result
-        AuthDAO-->>HelperV2: Return AuthenticationResult
-        
-        HelperV2->>AuthDAO: updateBadPasswordCountForDebit(username)
-        AuthDAO->>DAO_DB: Call OLB_FBCsignIn_PRG.FBCSignIn_USP procedure
-        DAO_DB-->>AuthDAO: Return update result
-        AuthDAO-->>HelperV2: Return update status
-    end
-    
-    HelperV2-->>AuthSvcV2: Return authentication result
-    
-    alt Authentication fails
-        AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.FAILURE, ...)
-        AuthSvcV2-->>Client: Return AuthenticationException
-    else Authentication successful
-        AuthSvcV2->>Feign: rsaQuery(rsaQueryRequest)
-        Feign->>RSA_API: Call RSA Query API
-        RSA_API-->>Feign: Return RsaQueryResponseDto
-        Feign-->>AuthSvcV2: Return RSA query response
-        
-        alt RSA status not VERIFIED or DELETED
-            AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.FAILURE, ...)
-            AuthSvcV2-->>Client: Return AuthenticationException
-        else RSA status VERIFIED
-            opt Non-commercial customer with tmxSessionId
-                AuthSvcV2->>Feign: notifyTMX(restTemplate, hubRferUrl, tmxParam)
-                Feign->>TMX_API: Call ThreatMetrix API
-                TMX_API-->>Feign: Return fraud assessment
-                Feign-->>AuthSvcV2: Return RetrieveBiocatchFraudAssessmentResponse
-                
-                Note over AuthSvcV2: Extract TMX data for RSA risk factors
-            end
-            
-            AuthSvcV2->>Feign: rsaAnalyze(apiRequestDto with factList)
-            Feign->>RSA_API: Call RSA Analyze API
-            RSA_API-->>Feign: Return ResponseDTO
-            Feign-->>AuthSvcV2: Return RSA analysis
-            
-            Note over AuthSvcV2: Extract sessionId, transactionId, device binding
-            AuthSvcV2->>HelperV2: setGenericAuthenticationResponseHeader(headers, ...)
-            
-            alt RSA risk policy DENY
-                AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.FAILURE, ...)
-                AuthSvcV2-->>Client: Return AuthenticationException
-            else RSA risk policy CHALLENGE
-                alt Commercial customer
-                    AuthSvcV2->>Feign: rsaChallenge(apiRequestDto)
-                    Feign->>RSA_API: Call RSA Challenge API
-                    RSA_API-->>Feign: Return challenge response
-                    Feign-->>AuthSvcV2: Return ResponseDTO
-                    
-                    AuthSvcV2->>HelperV2: setAuthenticationResponseHeaderVerifyChallenge(...)
-                    AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.SUCCESS, ...)
-                    AuthSvcV2-->>Client: Return RSA challenge response
-                else Retail customer
-                    AuthSvcV2->>HelperV2: setAuthenticationResponseHeaderWhenOTPChallenge(...)
-                    AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.ATTEMPT, ...)
-                    AuthSvcV2-->>Client: Return OTP challenge response
-                end
-            else RSA risk policy ALLOW
-                AuthSvcV2->>HelperV2: setAuthenticationResponseHeaderWhenSkipVerifyChallenge(...)
-                AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.SUCCESS, ...)
-                AuthSvcV2-->>Client: Return authentication success
-            end
-        end
-    end
+h1. Comparison of Debit Card vs. Commercial Credit Card Authentication Flows
+
+Based on the analysis of the provided code, here's a detailed comparison between the authentication flows for debit cards (retail customers) and credit cards (commercial customers):
+
+h2. Common Authentication Steps (Both Flows)
+
+# *Initial Validation*:
+** Card number format validation (16 digits)
+** Mod-10 check (Luhn algorithm)
+** Password length validation (8-13 characters)
+** HTTP Referer validation
+** BIN range validation
+
+# *ISDS Credential Verification*:
+** Retrieve credential information from ISDS
+** Determine credential type and status
+
+# *Basic Checks*:
+** Card registration status validation
+** Card status check (compromised, captured, inactive, etc.)
+
+# *Authentication*:
+** ISDS-based or database-based authentication
+** RSA Query to verify user registration status
+** RSA Analyze for risk assessment
+
+# *Risk-Based Flow*:
+** Different paths for ALLOW, CHALLENGE, and DENY policies
+** Event publishing for auditing
+
+h2. Key Differences Between Flows
+
+||Feature||Debit Card (Retail)||Commercial Credit Card||
+|*Customer Type*|"P" (Personal)|"0" (Organization) later converted to "Commercial"|
+|*Customer Identifier*|Varies based on card type|Fixed as "COMMERCIAL_DEBIT_CARD"|
+|*OTP Lock Check*|Required - calls {{validateOTPLockStatus()}}|Skipped - "Skip validateOTPLock for commercial card"|
+|*TMX Integration*|Performs fraud detection with ThreatMetrix|Skipped - {{userStatus = null}} for commercial cards|
+|*Challenge Flow*|Uses OTP challenge through {{setAuthenticationResponseHeaderWhenOTPChallenge()}}|Uses RSA challenge through {{rsaChallenge()}} API|
+|*Header Management*|Standard retail headers|Includes proxy ID for commercial customers|
+|*Proxy ID*|Not required|Retrieved from {{getProxyId()}} via Party Identification service|
+|*Auth Level*|Level "4" for ALLOW, Level "2" for CHALLENGE|Level "5" for ALLOW (commercial)|
+
+h2. Detailed Flow Differences
+
+h3. Debit Card (Retail) Specific Steps:
+
+# *OTP Verification*:
+** Validates OTP lock status to ensure account isn't locked due to failed OTP attempts
+** Sets retail-specific MFA methods in headers
+
+# *TMX Fraud Detection*:
+** Integrates with ThreatMetrix for fraud scoring
+** Passes TMX data to RSA for risk assessment
+
+# *Challenge Handling*:
+** When RSA returns CHALLENGE policy, initiates OTP challenge
+** Sets {{x_bmo_retcan_mfa_methods}} with available MFA methods
+** Uses {{EventStatus.ATTEMPT}} for event publishing
+
+h3. Commercial Credit Card Specific Steps:
+
+# *Customer Type Handling*:
+** Identifies "0" as commercial customer type
+** Explicitly validates with {{validateCustomerType()}} instead of {{checkCustomerType()}}
+
+# *Proxy ID Retrieval*:
+** For ALLOW policy, retrieves proxy ID from Party Identification service
+** Adds proxy ID to response headers with {{x_bmo_proxyid}}
+
+# *Challenge Handling*:
+** When RSA returns CHALLENGE policy, calls {{rsaChallenge()}} API
+** Sets different headers with {{setAuthenticationResponseHeaderVerifyChallenge()}}
+** Uses {{EventStatus.SUCCESS}} for event publishing (different from retail flow)
+
+# *Company Information*:
+** Extracts company name instead of first/last name
+** Uses different header population for commercial entities
+
+h2. Implementation Details
+
+# *Code Conditionals*:
+{code:java}
+if ("COMMERCIAL_DEBIT_CARD".equalsIgnoreCase(customerIdentifier)) {
+    logger.info("|Skip validateOTPLock for commercial card |");
+} else {
+    // OTP lock validation for retail customers
+}
+{code}
+
+# *Header Setting*:
+{code:java}
+// Commercial specific headers
+if (customerType.equalsIgnoreCase(AppConstants.CUSTOMER_TYPE_COMMERCIAL)) {
+    headers.add("x_bmo_proxyid", proxyId);
+    // Different auth level for commercial
+    headers.put("am-eai-auth-level", Arrays.asList("5"));
+} else {
+    // Retail specific headers
+    headers.put("am-eai-auth-level", Arrays.asList("4"));
+}
+{code}
+
+# *TMX Handling*:
+{code:java}
+// Skip TMX call for commercial card
+if ("COMMERCIAL_DEBIT_CARD".equalsIgnoreCase(customerIdentifier)) {
+    logger.info("|Setting userStatus to null for commercial card");
+    tmxParam.setUserStatus(null);
+}
+{code}
+
+h2. Conclusion
+
+The authentication service implements a sophisticated dual-track system that caters to both retail debit card users and commercial credit card users. While the core validation and authentication logic remains similar, key differences exist in fraud detection, multi-factor authentication methods, and session/header management to accommodate the different security needs and usage patterns of these distinct customer types.
+
+The commercial credit card flow emphasizes organizational identity (proxy ID) and uses a specialized challenge mechanism, while the retail debit card flow integrates additional fraud detection (TMX) and standardized OTP challenges for consumer-oriented security.
