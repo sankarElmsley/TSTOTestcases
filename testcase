@@ -1,69 +1,204 @@
 sequenceDiagram
     autonumber
     
-    Client->>AuthenticationServiceV2: authenticate(credentials)
-    Note over AuthenticationServiceV2: Generate logging context
+    actor Client
+    participant AuthSvcV2 as AuthenticationServiceV2
+    participant HelperV2 as AuthenticationServiceHelperV2
+    participant AuthISDSAdapter as AuthenticatorISDS
+    participant ISDSHelp as ISDSHelper
+    participant GetCredSvc as ISDSGetCredentialService
+    participant HashAuthSvc as ISDSHashAuthService
+    participant LegacyAuthSvc as ISDSLegacyAuthService
+    participant AuthDAO as AuthenticatorDAO
+    participant Feign as FeignHttpServiceImpl
+    participant DAO_DB as Database
+    participant ISDS_API as ISDS External API
+    participant RSA_API as RSA Services
+    participant TMX_API as TMX Fraud Service
+    participant CardSvc as Card Services
+    participant EventPub as LoginEventPublisher
     
-    AuthenticationServiceV2->>ISDSHelper: getIsdsGetCredentialResponse(username)
-    ISDSHelper-->>AuthenticationServiceV2: Return credential info
+    Client->>AuthSvcV2: authenticate(validateUser, headers)
+    Note over AuthSvcV2: Generate request ID & logging context
     
-    AuthenticationServiceV2->>AuthenticationServiceHelperV2: clientValidations(validateUser, headers)
-    Note over AuthenticationServiceHelperV2: Perform Mod-10 check<br/>Validate BIN range
+    Note over AuthSvcV2: Create RequestBean, LoginEvent, DBValidationParam, TmxParam
     
-    AuthenticationServiceV2->>AuthenticationServiceHelperV2: checkCustomerType(customerType)
+    AuthSvcV2->>ISDSHelp: getIsdsGetCredentialResponse(username)
+    ISDSHelp->>GetCredSvc: getCredential(GetCredentialRequest, headers, requestId)
+    GetCredSvc->>Feign: isdsGetCredential(request, headers)
+    Feign->>ISDS_API: Call ISDS GetCredential API
+    ISDS_API-->>Feign: Return GetCredentialRestResponseType
+    Feign-->>GetCredSvc: Return credential response
+    GetCredSvc-->>ISDSHelp: Return credential info
     
-    AuthenticationServiceV2->>ExternalService: Get debit card details
-    ExternalService-->>AuthenticationServiceV2: Return card details
+    Note over ISDSHelp: Extract credentialType, credentialStatus, uid
+    ISDSHelp-->>AuthSvcV2: Return credential details
     
-    AuthenticationServiceV2->>AuthenticationServiceHelperV2: checkCardStatus(cardDetails)
+    Note over AuthSvcV2: Determine if isCardNumberLogin
+    Note over AuthSvcV2: Extract language, deviceToken, hashedFBC
+    
+    AuthSvcV2->>HelperV2: clientValidations(validateUser, restTemplate, referer, reqBean, etc.)
+    Note over HelperV2: Validate username length (16 chars)
+    HelperV2->>HelperV2: mod10Check(validateUser.getUsername())
+    Note over HelperV2: Validate password length (8-13 chars)
+    HelperV2->>HelperV2: checkAccessValidity(restTemplate, validateUser, dbParam, tmxParam, loginEvent)
+    Note over HelperV2: Validate referer URL against allowed values
+    
+    HelperV2->>Feign: creditCardUtilityV3Client.getBinRanges(reqBean)
+    Feign->>CardSvc: Get BIN ranges
+    CardSvc-->>Feign: Return BIN ranges
+    Feign-->>HelperV2: Return BIN list
+    
+    Note over HelperV2: Check if card BIN is in valid range
+    Note over HelperV2: Validate product code if customerIdentifier provided
+    HelperV2-->>AuthSvcV2: Return validation result (true/exception)
+    
+    AuthSvcV2->>Feign: getFinancialSnapshot(requestHeaders, retrievePartyRequest)
+    Feign->>CardSvc: Call RetrievePartySnapshot Service
+    CardSvc-->>Feign: Return RetrievePartyResponse
+    Feign-->>AuthSvcV2: Return party info
+    
+    Note over AuthSvcV2: Extract customerType from response
+    
+    AuthSvcV2->>HelperV2: checkCustomerType(customerType, detailsLogString, deviceTokenCookie)
+    HelperV2-->>AuthSvcV2: Return validation result (true/exception)
     
     alt Retail customer
-        AuthenticationServiceV2->>AuthenticationServiceHelperV2: validateOTPLockStatus()
+        AuthSvcV2->>HelperV2: validateOTPLockStatus(username, hashedFBC, reqBean, loginEvent, detailsLogOnly)
+        HelperV2->>Feign: checkOTPLockStatus(body, requestBean)
+        Feign->>CardSvc: Call OTP lock status check service
+        CardSvc-->>Feign: Return lock status
+        Feign-->>HelperV2: Return lock status
+        Note over HelperV2: Throw exception if OTP is locked
+        HelperV2-->>AuthSvcV2: Return if no OTP lock
     end
     
-    AuthenticationServiceV2->>ISDSHelper: initialISDSValidations(credential)
-    Note over ISDSHelper: Check if card is suspended
+    AuthSvcV2->>HelperV2: initialISDSValidations(loginCredential, dbValidationParam, loginEvent, isdsDto)
     
-    AuthenticationServiceV2->>ISDSHelper: isdsValidations(credential, password)
-    ISDSHelper-->>AuthenticationServiceV2: Return authentication result
+    alt Legacy flow (database validation)
+        AuthSvcV2->>HelperV2: initialDatabaseValidationV2(validateUser, dbValidationParam, loginEvent)
+        HelperV2->>AuthDAO: checkSuspensions(username)
+        AuthDAO->>DAO_DB: Call OLBValidateSuspension_SSP stored procedure
+        DAO_DB-->>AuthDAO: Return suspension status
+        AuthDAO-->>HelperV2: Return suspension check result
+        
+        opt Card is suspended
+            HelperV2->>Feign: rsaNotify(requestDTO)
+            Feign->>RSA_API: Call RSA notify API
+            RSA_API-->>Feign: Return response
+            Feign-->>HelperV2: Return notification result
+            
+            HelperV2->>AuthDAO: checkSuspensionReason(username)
+            AuthDAO->>DAO_DB: Call OIB_NBSUSPENSION_PRG.OLB_NBSUSPENSION_SSP
+            DAO_DB-->>AuthDAO: Return suspension reason
+            AuthDAO-->>HelperV2: Return reason code
+            
+            HelperV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.FAILURE, ...)
+            HelperV2-->>AuthSvcV2: Throw AuthenticationException
+        end
+    end
+    
+    AuthSvcV2->>Feign: getDebitCardDetails(requestHeaders, cardDetailsRequest)
+    Feign->>CardSvc: Call debit card details service
+    CardSvc-->>Feign: Return card details
+    Feign-->>AuthSvcV2: Return GetFullDetailsResponse
+    
+    AuthSvcV2->>HelperV2: checkCardStatus(debitCardDetails.getCardDetails(), detailsLogString, deviceTokenCookie, loginEvent)
+    Note over HelperV2: Check for compromised/captured/inactive cards
+    HelperV2-->>AuthSvcV2: Return validation result (true/exception)
+    
+    Note over AuthSvcV2: Check if tbRegisterDate is null
+    
+    AuthSvcV2->>HelperV2: isdsValidations(null, validateUser, loginCredential, dbValidationParam, tmxParam, loginEvent, isdsDto)
+    
+    alt ISDS Authentication
+        HelperV2->>AuthISDSAdapter: authenticate(cardNumber, password)
+        AuthISDSAdapter->>ISDSHelp: authenticate(cardNumber, password)
+        
+        alt Legacy credential type
+            ISDSHelp->>LegacyAuthSvc: legacyAuth(authenticateUserRequest, headers, requestId)
+            LegacyAuthSvc->>Feign: isdsLegacyAuth(request, headers)
+            Feign->>ISDS_API: Call ISDS Legacy Auth API
+            ISDS_API-->>Feign: Return AuthenticateUserRestResponseType
+            Feign-->>LegacyAuthSvc: Return auth response
+            LegacyAuthSvc-->>ISDSHelp: Return auth result
+        else Hash-based credential type
+            ISDSHelp->>HashAuthSvc: hashAuth(authenticateUserRequest, headers, requestId)
+            HashAuthSvc->>Feign: isdsHashAuth(request, headers)
+            Feign->>ISDS_API: Call ISDS Hash Auth API
+            ISDS_API-->>Feign: Return AuthenticateUserRestResponseType
+            Feign-->>HashAuthSvc: Return auth response
+            HashAuthSvc-->>ISDSHelp: Return auth result
+        end
+        
+        ISDSHelp-->>AuthISDSAdapter: Return AuthenticationResult
+        AuthISDSAdapter-->>HelperV2: Return authentication result
+    else Legacy Database Authentication
+        HelperV2->>AuthDAO: authenticate(cardNumber, password)
+        AuthDAO->>DAO_DB: Call OLB_PASSWORD_ENHANCEMENT_PRG.OLB_Password_SSP procedure
+        DAO_DB-->>AuthDAO: Return authentication result
+        AuthDAO-->>HelperV2: Return AuthenticationResult
+        
+        HelperV2->>AuthDAO: updateBadPasswordCountForDebit(username)
+        AuthDAO->>DAO_DB: Call OLB_FBCsignIn_PRG.FBCSignIn_USP procedure
+        DAO_DB-->>AuthDAO: Return update result
+        AuthDAO-->>HelperV2: Return update status
+    end
+    
+    HelperV2-->>AuthSvcV2: Return authentication result
     
     alt Authentication fails
-        AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(FAILURE)
-        AuthenticationServiceV2-->>Client: Return authentication error
+        AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.FAILURE, ...)
+        AuthSvcV2-->>Client: Return AuthenticationException
     else Authentication successful
-        AuthenticationServiceV2->>RSAServices: rsaQuery(username)
-        RSAServices-->>AuthenticationServiceV2: Return RSA user status
+        AuthSvcV2->>Feign: rsaQuery(rsaQueryRequest)
+        Feign->>RSA_API: Call RSA Query API
+        RSA_API-->>Feign: Return RsaQueryResponseDto
+        Feign-->>AuthSvcV2: Return RSA query response
         
         alt RSA status not VERIFIED or DELETED
-            AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(FAILURE)
-            AuthenticationServiceV2-->>Client: Return authentication error
+            AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.FAILURE, ...)
+            AuthSvcV2-->>Client: Return AuthenticationException
         else RSA status VERIFIED
-            opt Non-commercial customer
-                AuthenticationServiceV2->>TMXServices: notifyTMX(tmxParam)
-                TMXServices-->>AuthenticationServiceV2: Return fraud assessment
+            opt Non-commercial customer with tmxSessionId
+                AuthSvcV2->>Feign: notifyTMX(restTemplate, hubRferUrl, tmxParam)
+                Feign->>TMX_API: Call ThreatMetrix API
+                TMX_API-->>Feign: Return fraud assessment
+                Feign-->>AuthSvcV2: Return RetrieveBiocatchFraudAssessmentResponse
+                
+                Note over AuthSvcV2: Extract TMX data for RSA risk factors
             end
             
-            AuthenticationServiceV2->>RSAServices: rsaAnalyze(factData)
-            RSAServices-->>AuthenticationServiceV2: Return risk assessment
+            AuthSvcV2->>Feign: rsaAnalyze(apiRequestDto with factList)
+            Feign->>RSA_API: Call RSA Analyze API
+            RSA_API-->>Feign: Return ResponseDTO
+            Feign-->>AuthSvcV2: Return RSA analysis
+            
+            Note over AuthSvcV2: Extract sessionId, transactionId, device binding
+            AuthSvcV2->>HelperV2: setGenericAuthenticationResponseHeader(headers, ...)
             
             alt RSA risk policy DENY
-                AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(FAILURE)
-                AuthenticationServiceV2-->>Client: Return authentication error
+                AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.FAILURE, ...)
+                AuthSvcV2-->>Client: Return AuthenticationException
             else RSA risk policy CHALLENGE
                 alt Commercial customer
-                    AuthenticationServiceV2->>RSAServices: rsaChallenge()
-                    RSAServices-->>AuthenticationServiceV2: Return challenge details
-                    AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(SUCCESS)
-                    AuthenticationServiceV2-->>Client: Return RSA challenge response
+                    AuthSvcV2->>Feign: rsaChallenge(apiRequestDto)
+                    Feign->>RSA_API: Call RSA Challenge API
+                    RSA_API-->>Feign: Return challenge response
+                    Feign-->>AuthSvcV2: Return ResponseDTO
+                    
+                    AuthSvcV2->>HelperV2: setAuthenticationResponseHeaderVerifyChallenge(...)
+                    AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.SUCCESS, ...)
+                    AuthSvcV2-->>Client: Return RSA challenge response
                 else Retail customer
-                    AuthenticationServiceV2->>AuthenticationServiceHelperV2: setAuthenticationResponseHeaderWhenOTPChallenge()
-                    AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(ATTEMPT)
-                    AuthenticationServiceV2-->>Client: Return OTP challenge response
+                    AuthSvcV2->>HelperV2: setAuthenticationResponseHeaderWhenOTPChallenge(...)
+                    AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.ATTEMPT, ...)
+                    AuthSvcV2-->>Client: Return OTP challenge response
                 end
             else RSA risk policy ALLOW
-                AuthenticationServiceV2->>AuthenticationServiceHelperV2: setAuthenticationResponseHeaderWhenSkipVerifyChallenge()
-                AuthenticationServiceV2->>LoginEventPublisher: publishPasswordEvent(SUCCESS)
-                AuthenticationServiceV2-->>Client: Return authentication success
+                AuthSvcV2->>HelperV2: setAuthenticationResponseHeaderWhenSkipVerifyChallenge(...)
+                AuthSvcV2->>EventPub: publishPasswordEvent(loginEvent, EventStatus.SUCCESS, ...)
+                AuthSvcV2-->>Client: Return authentication success
             end
         end
     end
