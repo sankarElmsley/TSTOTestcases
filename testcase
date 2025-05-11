@@ -1,279 +1,138 @@
-# Potential Breakage Scenarios in ISDS Migration
+You're right about the initial ISDS call lacking error mapping. Let me add this important gap to the analysis:
 
-To better understand where the existing flow might break with the new ISDS-based code, I'll provide specific examples with data scenarios that could cause issues. These examples highlight concrete cases where functionality might break if not properly handled during migration.
+# Additional Gap in ISDS Migration: Initial ISDS Call Error Mapping
 
-## 1. Credential Format Edge Cases
+## 11. Initial ISDS GetCredential Call Error Mapping
 
-### Scenario: Non-Standard Card Numbers
+### Scenario: Initial ISDS Call Exception Handling
 **Data Example:**
-- Customer has card number: "0000123456789101" (starts with zeros but valid format)
-- Database approach: Treats as valid card number
-- ISDS approach: Might strip leading zeros, causing authentication failure
+- Authentication request made with valid credential format
+- Initial `getIsdsGetCredentialResponse()` call fails with ISDS-specific error
+- No comprehensive error mapping exists for this initial call
 
 **Potential Breakage:**
 ```java
-// Database approach processed all 16-digit numbers
-if (cardNumber.length() == 16) {
-    // Process normally
-}
+// Initial ISDS call in the new approach
+try {
+    // Call ISDS getCredential
+    GetCredentialRequest getCredentialRequest = ISDSGetCredentialMapper.createGetCredentialRequest(
+        ISDSServiceUtils.toIsamUserAlias(credential),
+        originatorApplicationCatalogueId,
+        originatorChannel
+    );
 
-// ISDS might have different normalization
-String normalizedCredential = ISDSServiceUtils.toIsamUserAlias(credential);
-// If normalizedCredential removes leading zeros, authentication will fail
-```
-
-**Real-world impact:** Customers with certain card number formats might suddenly be unable to log in.
-
-## 2. Temporary Password Status Detection
-
-### Scenario: Temporary Password With Special Status
-**Data Example:**
-- Customer has temporary password status code: "TEMP_SPECIAL" in database
-- Old code specifically checked for this status code
-- ISDS has a different representation of this status
-
-**Potential Breakage:**
-```java
-// Database code
-if ("TEMP_SPECIAL".equals(tempPasswordInfo.getStatusType())) {
-    // Special handling for this case
-    return ErrorCodeDTO._606;
-} 
-
-// ISDS might not have the same status type or might encode it differently
-if (isdsDto.getCredentialStatus() == ISDSServiceUtils.CREDENTIAL_STATUS_TEMPORARY_PASSWORD) {
-    // Generic handling without special case
-    return ErrorCodeDTO._605; // Different error code!
-}
-```
-
-**Real-world impact:** Customers might receive incorrect error messages or be allowed to proceed when they shouldn't be.
-
-## 3. Suspension Reason Mapping
-
-### Scenario: Card Suspended Due to Fraud Investigation
-**Data Example:**
-- Database has suspension reason code: "FRAUD_INVEST" with status flag 1
-- Database code returns specific error code 609
-- ISDS might have different coding for suspension reasons
-
-**Potential Breakage:**
-```java
-// Database approach
-if (results.getInt("status_flag") == 1) {
-    cardSuspensionReason = results.getString("locked_reason");
-    if ("FRAUD_INVEST".equalsIgnoreCase(cardSuspensionReason)) {
-        result = 2; // Special handling code
-        errorCode = "609";
-    }
-}
-
-// ISDS might not expose the same granular reason codes
-if (isdsHelper.isSuspended()) {
-    // Generic suspension detection without reason
-    errorCode = "603"; // Different error code!
-}
-```
-
-**Real-world impact:** Fraud cases might not be properly flagged, leading to inconsistent error messages and potential security issues.
-
-## 4. Account Lockout Counting
-
-### Scenario: Failed Authentication Attempts
-**Data Example:**
-- Customer has 2 failed attempts in database
-- Next failed attempt should lock the account
-- ISDS might track attempts differently or reset the counter during migration
-
-**Potential Breakage:**
-```java
-// Database directly updated counter
-authenticatorDao.updateBadPasswordCountForDebit(username);
-// Counter tracked in database, next failure locks account
-
-// ISDS implementation
-// If counter is not synchronized or reset during migration
-// Customer might get more than allowed attempts before lockout
-```
-
-**Real-world impact:** Security vulnerability where customers get more authentication attempts than they should.
-
-## 5. Card Status Check Differences
-
-### Scenario: Card in "Pre-Activation" Status
-**Data Example:**
-- Database has card status "P" (pre-activation)
-- Custom handling in database code treats this as inactive (status code 4)
-- ISDS might use a different status coding system
-
-**Potential Breakage:**
-```java
-// Database approach with custom mapping
-if ("P".equals(cardStatus)) {
-    // Treat as status 4 (inactive)
-    errorCode = "608";
-}
-
-// ISDS might have different status code that doesn't map the same way
-if (getCardDetailsRequestHubResponseDTO.getCardStatus().equals("4")) {
-    // Only checking for explicit inactive status, missing "P"
-    errorCode = "608";
-}
-```
-
-**Real-world impact:** Cards in certain statuses might be incorrectly allowed or prevented from authenticating.
-
-## 6. Error Code Translation
-
-### Scenario: Database-Specific Error Codes
-**Data Example:**
-- Database procedure returns error code 8045 (internal procedure code)
-- Old code mapped this to application error 704
-- ISDS returns different error code for the same condition
-
-**Potential Breakage:**
-```java
-// Database error handling
-catch (SQLException e) {
-    if (e.getErrorCode() == 8045) {
-        throw new AuthenticationException(
-            ErrorCodeDTO._704.toString(),
-            MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._704.toString())
+    isdsGetCredentialResponse = isdsGetCredentialService.getCredential(getCredentialRequest, headers, requestId);
+    
+    // Basic error checking without detailed mapping
+    if (!ISDSServiceUtils.OPERATION_RESULT_CODE_SUCCESS.equals(operationResultCode)) {
+        logger.error("ISDS.getCredential returned error code: " + operationResultCode);
+        throw new APIException(
+            ErrorCodeDTO._501.toString(),  // Generic system error
+            MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._501.toString())
         );
     }
-}
-
-// ISDS error handling
-catch (ChannelsBusinessException e) {
-    // Different error code for same condition
-    throw new AuthenticationException(
-        ErrorCodeDTO._501.toString(), // General system error instead of specific code
+} catch (Exception e) {
+    // Generic exception handling
+    throw new APIException(
+        ErrorCodeDTO._501.toString(),
         MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._501.toString())
     );
 }
 ```
 
-**Real-world impact:** Systems that depend on specific error codes for business processes might break, and different error messages might confuse users.
+**Critical Issue:** The initial ISDS call maps ALL error conditions to a generic system error (501), whereas the database approach had much more granular error codes for different failure scenarios.
 
-## 7. Transaction Timing Issues
+### Specific Error Mapping Gaps:
 
-### Scenario: Near-Simultaneous Authentication Attempts
-**Data Example:**
-- Customer attempts login twice within milliseconds
-- Database handled this transactionally, recording both attempts
-- ISDS API calls might not maintain the same order or atomicity
+1. **Credential Not Found**:
+   - Database: Returns specific error code 601 for card not found
+   - ISDS: All credential not found errors map to generic 501 system error
 
-**Potential Breakage:**
-```java
-// Database approach (transactional)
-// Both operations happen in a single transaction
-conn = jdbcTemplateOne.getDataSource().getConnection();
-// Check authentication + Update attempt count in one transaction
+2. **Service Unavailability**:
+   - Database: Specific handling for connection issues vs. data issues
+   - ISDS: Both service unavailability and data issues map to same error
 
-// ISDS approach (multiple API calls)
-AuthenticationResult result = isdsHelper.authenticate(cardNumber, password);
-// Separate API call to update attempt count
-// If the second call fails, state becomes inconsistent
-```
+3. **Invalid Credential Format**:
+   - Database: Explicit validation before DB call, with specific error codes
+   - ISDS: Validation happens inside ISDS service, any format error returns generic error
 
-**Real-world impact:** Race conditions could lead to authentication state inconsistencies or security vulnerabilities.
+### Real-world Impact:
 
-## 8. Timing-Based Validations
+1. **Degraded User Experience**:
+   - Users get generic "system error" messages instead of helpful specific errors
+   - Support staff has less insight into actual authentication issues
 
-### Scenario: Expired Temporary Password
-**Data Example:**
-- Temporary password expired 1 minute ago
-- Database code checked expiry against current database time
-- ISDS might use a different time source with slight difference
+2. **Troubleshooting Challenges**:
+   - Less granular error information makes debugging more difficult
+   - Harder to identify patterns in authentication failures
 
-**Potential Breakage:**
-```java
-// Database approach
-Date todayDate = new Date();
-if (tempPasswordInfo.getExpiryDate() != null && todayDate.after(tempPasswordInfo.getExpiryDate())) {
-    // Password is expired
-    throw new AuthenticationException(EXP_TEMP_PSWD, ...);
-}
+3. **Integration Problems**:
+   - Systems expecting specific error codes will receive generic errors
+   - Automated flows dependent on specific error codes may break
 
-// ISDS approach
-// If ISDS server time and application server time differ slightly
-// A password might be considered expired in one system but not the other
-```
+### Example Scenarios Where This Breaks:
 
-**Real-world impact:** Customers might be incorrectly allowed to use expired credentials or vice versa.
+1. **Self-Service Recovery**:
+   - Old flow: User enters non-existent card, receives "card not found" error, is directed to card lookup
+   - New flow: User receives generic system error, doesn't know what went wrong
 
-## 9. Card Replacement Handling
+2. **Security Monitoring**:
+   - Old flow: Security systems tracked specific authentication error patterns
+   - New flow: All errors look the same, harder to detect attack patterns
 
-### Scenario: Customer Using Replacement Card
-**Data Example:**
-- Old card number: "4500123456781234"
-- New replacement card: "4500123456785678" 
-- Database had specific lookup for replacement card relationship
-- ISDS might not maintain the same relationship or require different lookup
+3. **User Guidance**:
+   - Old flow: User receives "card expired" message for expired card
+   - New flow: User receives generic error, calls support unnecessarily
 
-**Potential Breakage:**
-```java
-// Database approach for replacement cards
-if (ErrorCodeDTO._601.toString().equalsIgnoreCase(e.getCode())
-        && "0000000000000000".equals(dbParam.getPreviousCardNumber())) {
-    // Try authentication with previous card
-    ar = authenticatorDao.authenticate(dbParam.getPreviousCardNumber(), validateUser.getPassword());
-    // Special error code for replacement card scenario
-    throw new AuthenticationException(ErrorCodeDTO._604.toString(), ...);
-}
+### Recommended Mitigation:
 
-// ISDS approach might not have the same detection method
-// or might normalize card numbers differently
-```
+1. **Create Comprehensive Error Mapping**:
+   - Map ISDS error codes to existing application error codes
+   - Enhance error handling in the ISDS wrapper to detect specific conditions
 
-**Real-world impact:** Customers with replacement cards might get generic "invalid credentials" errors instead of helpful guidance.
+2. **Add Error Detection Logic**:
+   ```java
+   // Enhanced error detection for initial ISDS call
+   if (isdsGetCredentialResponse == null) {
+       throw new APIException(
+           ErrorCodeDTO._501.toString(),
+           MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._501.toString())
+       );
+   }
+   
+   String operationResultCode = Optional.ofNullable(isdsGetCredentialResponse.getResultInfo())
+       .map(ResultInfo::getOperationResultCode)
+       .orElse("N/A");
+       
+   // Map ISDS error codes to application error codes
+   switch (operationResultCode) {
+       case "CREDENTIAL_NOT_FOUND":
+           throw new APIException(
+               ErrorCodeDTO._601.toString(),
+               MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._601.toString())
+           );
+       case "CREDENTIAL_SUSPENDED":
+           throw new APIException(
+               ErrorCodeDTO._603.toString(),
+               MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._603.toString())
+           );
+       // Add mappings for all known ISDS error codes
+       default:
+           if (!ISDSServiceUtils.OPERATION_RESULT_CODE_SUCCESS.equals(operationResultCode)) {
+               throw new APIException(
+                   ErrorCodeDTO._501.toString(),
+                   MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._501.toString())
+               );
+           }
+   }
+   ```
 
-## 10. Custom Business Rules
+3. **Add Pre-validation**:
+   - Add explicit credential format validation before ISDS call
+   - Return the same specific error codes as the old flow for validation failures
 
-### Scenario: Special Card BIN Range Validation
-**Data Example:**
-- Card BIN range: "450000-455999" has special validation rules
-- Database code had custom validation logic for this range
-- ISDS might not implement the same special case handling
+4. **Enhanced Logging**:
+   - Log detailed ISDS error information even when returning generic codes
+   - Create mapping tables for support staff to correlate generic errors with specific ISDS issues
 
-**Potential Breakage:**
-```java
-// Database custom validation
-if (cardBinDigits >= 450000 && cardBinDigits <= 455999) {
-    // Apply special validation rules for premium cards
-    boolean validProductCode = customerTypeResolver.validateProductCode(
-            customerIdentifier, binHubDTO.getProductCode(), deviceTokenCookie, detailsToLog);
-    // Special rules for this BIN range
-}
-
-// ISDS might apply generic validation to all BIN ranges
-// Missing the special case handling
-```
-
-**Real-world impact:** Certain card types might not get their required special handling, leading to incorrect authentication results.
-
-## Recommended Mitigation Strategies
-
-To prevent these specific breakage scenarios:
-
-1. **Comprehensive Data Testing**:
-   - Test with a wide variety of real-world data examples
-   - Include edge cases like leading zeros, special statuses, etc.
-
-2. **Side-by-Side Validation**:
-   - Run both authentication methods in parallel
-   - Log discrepancies for analysis before cutting over
-
-3. **Error Code Mapping Layer**:
-   - Create a dedicated mapping layer to ensure consistent error codes
-   - Match ISDS error responses to existing application error codes
-
-4. **Synchronization Period**:
-   - Implement a synchronization period where both systems update account statuses
-   - Ensure counters and statuses are synchronized before full migration
-
-5. **Robust Logging**:
-   - Add detailed logging around sensitive operations
-   - Enable easy comparison between old and new flows during testing
-
-By addressing these specific scenarios and implementing these mitigation strategies, you can significantly reduce the risk of breaking existing functionality during the migration to ISDS-based authentication.
+This initial ISDS call error mapping gap is particularly critical because it's the first step in the authentication flow. If this step fails with generic errors, users and support staff will have a significantly degraded experience compared to the more informative database-based authentication approach.
