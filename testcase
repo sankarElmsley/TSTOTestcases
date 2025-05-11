@@ -1,17 +1,17 @@
-# BMO Debit Card Authentication Flow Documentation
+# BMO Commercial Credit Card Authentication Flow Documentation
 
 ## Overview
 
-This document details the comprehensive authentication flow for BMO retail customers using their debit cards. The flow is specifically designed for the Open Banking (OPBK) flow where customers are redirected from a Data Recipient app/website to the BMO OPBK customer sign-in page for authentication before providing consent to share their financial data.
+This document details the comprehensive authentication flow for BMO commercial customers using their credit cards. The authentication process is specifically designed for business customers who need secure access to their accounts and services. The flow differs from the retail debit card process due to the unique security and operational requirements of commercial banking.
 
 ## Authentication Process Flow
 
-The debit card authentication process follows these sequential steps:
+The commercial credit card authentication process follows these sequential steps:
 
 ### 1. Initial Request Processing
 
 1. **Request Validation**
-   - Client sends authentication request with debit card number and password
+   - Client sends authentication request with credit card number, password, and customerIdentifier="COMMERCIAL_DEBIT_CARD"
    - System generates request ID and logging context
    - Input validation performed:
      - Card number must be 16 digits
@@ -24,22 +24,22 @@ The debit card authentication process follows these sequential steps:
 
 3. **BIN Range Validation**
    - System retrieves BIN ranges from cache or calls creditCardUtilityV3Client.getBinRanges()
-   - Validates that card BIN falls within acceptable ranges for debit cards
-   - Validates product code is supported
+   - Validates that card BIN falls within acceptable ranges for commercial credit cards
+   - Validates product code is supported for commercial use
    - Failure returns error code 608
 
 ### 2. Customer Type Verification
 
 1. **Party Information Retrieval**
    - System calls getFinancialSnapshot to retrieve customer information
-   - Extracts customerType - must be "P" (Personal) for retail debit cards
-   - Validates customer type with checkCustomerType()
-   - Commercial customers ("0") are rejected from retail debit flow
+   - Extracts customerType - must be "0" (Organization) for commercial credit cards
+   - If customerType is "0", system sets customerIdentifier = "COMMERCIAL_DEBIT_CARD"
+   - Validates customer type with customerTypeResolver.validateCustomerType()
+   - Retail customers ("P") using commercial flow are rejected
 
 2. **OTP Lock Status Validation**
-   - System calls validateOTPLockStatus() to verify customer's OTP is not locked
-   - Uses checkOTPLockStatus() API
-   - If OTP is locked, returns error code 803 and authentication is rejected
+   - System skips validateOTPLockStatus() for commercial customers
+   - Log entry: "Skip validateOTPLock for commercial card"
 
 ### 3. Card Status Verification
 
@@ -89,16 +89,12 @@ The debit card authentication process follows these sequential steps:
    - Other non-verified statuses return error code 702
 
 2. **TMX Fraud Detection**
-   - For retail customers, calls notifyTMX() with device information and IP address
-   - TMX returns fraud assessment including:
-     - Policy score
-     - Review status
-     - Reason codes
-     - Device identifiers (exactId, smartId)
-     - IP geolocation information
+   - For commercial customers, TMX integration is skipped
+   - System sets tmxParam.setUserStatus(null)
+   - Log entry: "Setting userStatus to null for commercial card"
 
 3. **RSA Risk Analysis**
-   - System calls rsaAnalyze() with TMX data factors
+   - System calls rsaAnalyze() with factList (without TMX data)
    - RSA returns risk policy which can be:
      - ALLOW (low risk, no challenges required)
      - CHALLENGE (medium risk, requires additional verification)
@@ -106,33 +102,38 @@ The debit card authentication process follows these sequential steps:
 
 ### 6. Challenge Flow (if required)
 
-1. **OTP Challenge Setup**
-   - If RSA returns CHALLENGE policy for retail customers:
-     - System prepares available authentication methods using prepareRSAAuthenticationMethodString()
-     - Filters methods based on otpChallengeSupressMethods configuration
-     - Sets header x_bmo_retcan_mfa_methods with available methods
+1. **RSA Challenge for Commercial**
+   - If RSA returns CHALLENGE policy for commercial customers:
+     - System calls rsaChallenge() API directly
+     - Unlike retail flow, does not use OTP methods
      - Sets authentication level to "2" (challenge required)
 
 2. **Header Setup**
-   - For OTP challenges, system calls setAuthenticationResponseHeaderWhenOTPChallenge()
-   - Sets x_bmo_user_session_id with a new session ID
-   - Sets x_bmo_rsa_tx_id with the transaction ID for OTP verification
-   - Publishes EventStatus.ATTEMPT event
+   - For RSA challenges, system calls setAuthenticationResponseHeaderVerifyChallenge()
+   - Sets x_bmo_rsa_session_id with RSA session ID
+   - Sets am-eai-auth-level to "2"
+   - Publishes EventStatus.SUCCESS event (different from retail flow)
 
 3. **Challenge Response**
-   - System returns OTP challenge response to client
-   - Client must complete OTP verification to proceed
+   - System returns RSA challenge response to client
+   - Client must complete RSA verification to proceed
 
 ### 7. Authentication Completion
 
-1. **Direct Authentication**
+1. **Proxy ID Retrieval**
+   - For ALLOW policy, system retrieves proxy ID:
+     - Calls getProxyId(ecifId, "100058", "ECIF", proxyIdType, proxyIdValue, reqBean, deviceTokenCookie)
+     - Uses invokePartyIdentificationV5() to call PartyIdentificationV5Client
+
+2. **Direct Authentication**
    - If RSA returns ALLOW policy:
      - System calls setAuthenticationResponseHeaderWhenSkipVerifyChallenge()
-     - Sets authentication level to "4" (fully authenticated)
+     - Sets authentication level to "5" (fully authenticated for commercial)
+     - Adds x_bmo_proxyid header with retrieved proxy ID
      - Publishes EventStatus.SUCCESS event
      - Returns authentication success to client
 
-2. **Error Handling**
+3. **Error Handling**
    - If authentication fails at any step:
      - System publishes EventStatus.FAILURE event with appropriate reason code
      - Returns error response with appropriate error code and message
@@ -156,7 +157,6 @@ The debit card authentication process follows these sequential steps:
 | 704 | RSA service error |
 | 705 | RSA risk policy deny |
 | 801 | Card not registered for online banking |
-| 803 | OTP is locked |
 | 901 | Card is compromised |
 | 902 | Compromise exceeded |
 | 903 | Card is lost or stolen |
@@ -168,8 +168,8 @@ The debit card authentication process follows these sequential steps:
 
 - Password attempts are tracked in the backend database
 - After 3 failed password attempts, the account becomes locked (error code 603)
-- For OTP verification, after 3 failed OTP attempts, OTP becomes locked (error code 803)
-- Both locks require customer service intervention to reset
+- Commercial customers do not use OTP verification
+- Password locks require customer service intervention to reset
 
 ## Security Features
 
@@ -179,10 +179,11 @@ The debit card authentication process follows these sequential steps:
    - Password complexity and validity checks
    - Registration status validation
 
-2. **Fraud Detection Integration**
-   - ThreatMetrix integration for device fingerprinting and risk scoring
-   - IP address analysis
-   - Device behavior analysis
+2. **Commercial-Specific Security**
+   - Proxy ID retrieval and validation
+   - Higher authentication level (Level "5")
+   - RSA challenge instead of OTP
+   - Different header management approach
 
 3. **Risk-Based Authentication**
    - RSA risk analysis based on multiple factors
@@ -191,17 +192,15 @@ The debit card authentication process follows these sequential steps:
 
 4. **Account Protection**
    - Password lockout after multiple failed attempts
-   - OTP lockout after multiple failed attempts
-   - Temporary password handling with expiration
+   - Specialized commercial account handling
 
 ## Events and Auditing
 
 All authentication attempts, successes, and failures are recorded and published to the LoginEventPublisher with:
 
 1. **Event Status**
-   - SUCCESS: Successful authentication
+   - SUCCESS: Successful authentication or challenge initiated (different from retail)
    - FAILURE: Failed authentication with reason code
-   - ATTEMPT: Challenge initiated (OTP)
 
 2. **Context Information**
    - Device information
@@ -209,35 +208,39 @@ All authentication attempts, successes, and failures are recorded and published 
    - Card number (masked)
    - Timestamp
    - Channel information
+   - Commercial customer type
 
 3. **Risk Information**
-   - TMX risk assessment data
    - RSA risk policy and rule details
    - Device binding status
+   - No TMX data (skipped for commercial)
 
 ## Special Conditions Handling
 
-1. **Temporary Password**
-   - Customers with temporary passwords cannot authenticate through OPBK flow
-   - They must first reset their password through the regular online banking login
+1. **Company Information**
+   - For commercial customers, extracts company name instead of first/last name
+   - Sets company name in x_bmo_firstname header
 
-2. **Replacement Cards**
-   - Authentication with replacement cards is rejected with error code 604
-   - Customer must use their current active card
+2. **Proxy ID Management**
+   - Retrieves proxy ID through PartyIdentificationV5Client
+   - Adds to response headers as x_bmo_proxyid
+   - Only done for commercial customers
 
-3. **Card Status Changes**
-   - Any change in card status (compromised, lost, etc.) immediately prevents authentication
-   - Appropriate error codes are returned based on the specific status
+3. **Authentication Level**
+   - Uses higher authentication level (5) for commercial customers
+   - Different from retail authentication level (4)
 
-4. **Registration Requirements**
-   - Card must be registered for online banking (have tbRegisterDate)
-   - Card must not be in suspended state
+4. **Challenge Mechanism**
+   - Uses RSA challenge instead of OTP/MFA
+   - Different event publishing (SUCCESS vs ATTEMPT)
+   - Different header management
 
-## Language Support
+## Commercial-Specific Headers
 
-- All error messages and prompts support both English and French
-- Language preference is extracted from the HTTP request locale
-- Response headers include user language preference (x_bmo_user_lang)
+- x_bmo_proxyid: Contains the proxy ID for commercial customers
+- am-eai-auth-level: Set to "5" for fully authenticated commercial customers
+- am-eai-user-id: Formatted as hashedFBC.toUpperCase() + "@ciam"
+- x_bmo_customer_type: Set to commercial identifier
 
 ## Sequence Flow Diagram
 
@@ -245,4 +248,4 @@ All authentication attempts, successes, and failures are recorded and published 
 [See detailed sequence diagram in separate artifact]
 ```
 
-This document comprehensively covers the authentication process for BMO debit cards in the Open Banking flow, including all validation steps, security features, and error handling mechanisms.
+This document comprehensively covers the authentication process for BMO commercial credit cards, including all validation steps, security features, and error handling mechanisms. The flow highlights the key differences from the retail debit card authentication process, particularly in the areas of fraud detection, challenge mechanisms, and header management.
