@@ -1,115 +1,116 @@
-h1. Comparison of Debit Card vs. Commercial Credit Card Authentication Flows
+# Comparison of Debit Card vs. Commercial Credit Card Authentication Flows
 
 Based on the analysis of the provided code, here's a detailed comparison between the authentication flows for debit cards (retail customers) and credit cards (commercial customers):
 
-h2. Common Authentication Steps (Both Flows)
+## Common Authentication Steps (Both Flows)
 
-# *Initial Validation*:
-** Card number format validation (16 digits)
-** Mod-10 check (Luhn algorithm)
-** Password length validation (8-13 characters)
-** HTTP Referer validation
-** BIN range validation
+1. **Initial Validation**:
+   - Card number format validation (16 digits)
+   - Mod-10 check (Luhn algorithm)
+   - Password length validation (8-13 characters)
+   - HTTP Referer validation
+   - BIN range validation
 
-# *ISDS Credential Verification*:
-** Retrieve credential information from ISDS
-** Determine credential type and status
+2. **ISDS Credential Verification**:
+   - Retrieve credential information from ISDS
+   - Determine credential type and status
 
-# *Basic Checks*:
-** Card registration status validation
-** Card status check (compromised, captured, inactive, etc.)
+3. **Basic Checks**:
+   - Card registration status validation
+   - Card status check (compromised, captured, inactive, etc.)
 
-# *Authentication*:
-** ISDS-based or database-based authentication
-** RSA Query to verify user registration status
-** RSA Analyze for risk assessment
+4. **Authentication**:
+   - ISDS-based or database-based authentication
+   - RSA Query to verify user registration status
+   - RSA Analyze for risk assessment
 
-# *Risk-Based Flow*:
-** Different paths for ALLOW, CHALLENGE, and DENY policies
-** Event publishing for auditing
+5. **Risk-Based Flow**:
+   - Different paths for ALLOW, CHALLENGE, and DENY policies
+   - Event publishing for auditing
 
-h2. Key Differences Between Flows
+## Key Differences Between Flows
 
-||Feature||Debit Card (Retail)||Commercial Credit Card||
-|*Customer Type*|"P" (Personal)|"0" (Organization) later converted to "Commercial"|
-|*Customer Identifier*|Varies based on card type|Fixed as "COMMERCIAL_DEBIT_CARD"|
-|*OTP Lock Check*|Required - calls {{validateOTPLockStatus()}}|Skipped - "Skip validateOTPLock for commercial card"|
-|*TMX Integration*|Performs fraud detection with ThreatMetrix|Skipped - {{userStatus = null}} for commercial cards|
-|*Challenge Flow*|Uses OTP challenge through {{setAuthenticationResponseHeaderWhenOTPChallenge()}}|Uses RSA challenge through {{rsaChallenge()}} API|
-|*Header Management*|Standard retail headers|Includes proxy ID for commercial customers|
-|*Proxy ID*|Not required|Retrieved from {{getProxyId()}} via Party Identification service|
-|*Auth Level*|Level "4" for ALLOW, Level "2" for CHALLENGE|Level "5" for ALLOW (commercial)|
+| Feature | Debit Card (Retail) | Commercial Credit Card |
+|---------|---------------------|------------------------|
+| **Customer Type** | "P" (Personal) | "0" (Organization) later converted to "Commercial" |
+| **Customer Identifier** | Varies based on card type | Fixed as "COMMERCIAL_DEBIT_CARD" |
+| **OTP Lock Check** | Required - calls `validateOTPLockStatus()` | Skipped - "Skip validateOTPLock for commercial card" |
+| **TMX Integration** | Performs fraud detection with ThreatMetrix | Skipped - `userStatus = null` for commercial cards |
+| **Challenge Flow** | Uses OTP challenge through `setAuthenticationResponseHeaderWhenOTPChallenge()` | Uses RSA challenge through `rsaChallenge()` API |
+| **Header Management** | Standard retail headers | Includes proxy ID for commercial customers |
+| **Proxy ID** | Not required | Retrieved from `getProxyId()` via Party Identification service |
+| **Auth Level** | Level "4" for ALLOW, Level "2" for CHALLENGE | Level "5" for ALLOW (commercial) |
 
-h2. Detailed Flow Differences
+## Detailed Flow Differences
 
-h3. Debit Card (Retail) Specific Steps:
+### Debit Card (Retail) Specific Steps:
 
-# *OTP Verification*:
-** Validates OTP lock status to ensure account isn't locked due to failed OTP attempts
-** Sets retail-specific MFA methods in headers
+1. **OTP Verification**:
+   - Validates OTP lock status to ensure account isn't locked due to failed OTP attempts
+   - Sets retail-specific MFA methods in headers
 
-# *TMX Fraud Detection*:
-** Integrates with ThreatMetrix for fraud scoring
-** Passes TMX data to RSA for risk assessment
+2. **TMX Fraud Detection**:
+   - Integrates with ThreatMetrix for fraud scoring
+   - Passes TMX data to RSA for risk assessment
 
-# *Challenge Handling*:
-** When RSA returns CHALLENGE policy, initiates OTP challenge
-** Sets {{x_bmo_retcan_mfa_methods}} with available MFA methods
-** Uses {{EventStatus.ATTEMPT}} for event publishing
+3. **Challenge Handling**:
+   - When RSA returns CHALLENGE policy, initiates OTP challenge
+   - Sets `x_bmo_retcan_mfa_methods` with available MFA methods
+   - Uses `EventStatus.ATTEMPT` for event publishing
 
-h3. Commercial Credit Card Specific Steps:
+### Commercial Credit Card Specific Steps:
 
-# *Customer Type Handling*:
-** Identifies "0" as commercial customer type
-** Explicitly validates with {{validateCustomerType()}} instead of {{checkCustomerType()}}
+1. **Customer Type Handling**:
+   - Identifies "0" as commercial customer type
+   - Explicitly validates with `validateCustomerType()` instead of `checkCustomerType()`
 
-# *Proxy ID Retrieval*:
-** For ALLOW policy, retrieves proxy ID from Party Identification service
-** Adds proxy ID to response headers with {{x_bmo_proxyid}}
+2. **Proxy ID Retrieval**:
+   - For ALLOW policy, retrieves proxy ID from Party Identification service
+   - Adds proxy ID to response headers with `x_bmo_proxyid`
 
-# *Challenge Handling*:
-** When RSA returns CHALLENGE policy, calls {{rsaChallenge()}} API
-** Sets different headers with {{setAuthenticationResponseHeaderVerifyChallenge()}}
-** Uses {{EventStatus.SUCCESS}} for event publishing (different from retail flow)
+3. **Challenge Handling**:
+   - When RSA returns CHALLENGE policy, calls `rsaChallenge()` API
+   - Sets different headers with `setAuthenticationResponseHeaderVerifyChallenge()`
+   - Uses `EventStatus.SUCCESS` for event publishing (different from retail flow)
 
-# *Company Information*:
-** Extracts company name instead of first/last name
-** Uses different header population for commercial entities
+4. **Company Information**:
+   - Extracts company name instead of first/last name
+   - Uses different header population for commercial entities
 
-h2. Implementation Details
+## Implementation Details
 
-# *Code Conditionals*:
-{code:java}
-if ("COMMERCIAL_DEBIT_CARD".equalsIgnoreCase(customerIdentifier)) {
-    logger.info("|Skip validateOTPLock for commercial card |");
-} else {
-    // OTP lock validation for retail customers
-}
-{code}
+1. **Code Conditionals**:
+   ```java
+   if ("COMMERCIAL_DEBIT_CARD".equalsIgnoreCase(customerIdentifier)) {
+       logger.info("|Skip validateOTPLock for commercial card |");
+   } else {
+       // OTP lock validation for retail customers
+   }
+   ```
 
-# *Header Setting*:
-{code:java}
-// Commercial specific headers
-if (customerType.equalsIgnoreCase(AppConstants.CUSTOMER_TYPE_COMMERCIAL)) {
-    headers.add("x_bmo_proxyid", proxyId);
-    // Different auth level for commercial
-    headers.put("am-eai-auth-level", Arrays.asList("5"));
-} else {
-    // Retail specific headers
-    headers.put("am-eai-auth-level", Arrays.asList("4"));
-}
-{code}
+2. **Header Setting**:
+   ```java
+   // Commercial specific headers
+   if (customerType.equalsIgnoreCase(AppConstants.CUSTOMER_TYPE_COMMERCIAL)) {
+       headers.add("x_bmo_proxyid", proxyId);
+       // Different auth level for commercial
+       headers.put("am-eai-auth-level", Arrays.asList("5"));
+   } else {
+       // Retail specific headers
+       headers.put("am-eai-auth-level", Arrays.asList("4"));
+   }
+   ```
 
-# *TMX Handling*:
-{code:java}
-// Skip TMX call for commercial card
-if ("COMMERCIAL_DEBIT_CARD".equalsIgnoreCase(customerIdentifier)) {
-    logger.info("|Setting userStatus to null for commercial card");
-    tmxParam.setUserStatus(null);
-}
-{code}
+3. **TMX Handling**:
+   ```java
+   // Skip TMX call for commercial card
+   if ("COMMERCIAL_DEBIT_CARD".equalsIgnoreCase(customerIdentifier)) {
+       logger.info("|Setting userStatus to null for commercial card");
+       tmxParam.setUserStatus(null);
+   }
+   ```
 
-h2. Conclusion
+## Conclusion
 
 The authentication service implements a sophisticated dual-track system that caters to both retail debit card users and commercial credit card users. While the core validation and authentication logic remains similar, key differences exist in fraud detection, multi-factor authentication methods, and session/header management to accommodate the different security needs and usage patterns of these distinct customer types.
 
