@@ -1,251 +1,279 @@
-# BMO Commercial Credit Card Authentication Flow Documentation
+# Potential Breakage Scenarios in ISDS Migration
 
-## Overview
+To better understand where the existing flow might break with the new ISDS-based code, I'll provide specific examples with data scenarios that could cause issues. These examples highlight concrete cases where functionality might break if not properly handled during migration.
 
-This document details the comprehensive authentication flow for BMO commercial customers using their credit cards. The authentication process is specifically designed for business customers who need secure access to their accounts and services. The flow differs from the retail debit card process due to the unique security and operational requirements of commercial banking.
+## 1. Credential Format Edge Cases
 
-## Authentication Process Flow
+### Scenario: Non-Standard Card Numbers
+**Data Example:**
+- Customer has card number: "0000123456789101" (starts with zeros but valid format)
+- Database approach: Treats as valid card number
+- ISDS approach: Might strip leading zeros, causing authentication failure
 
-The commercial credit card authentication process follows these sequential steps:
+**Potential Breakage:**
+```java
+// Database approach processed all 16-digit numbers
+if (cardNumber.length() == 16) {
+    // Process normally
+}
 
-### 1. Initial Request Processing
-
-1. **Request Validation**
-   - Client sends authentication request with credit card number, password, and customerIdentifier="COMMERCIAL_DEBIT_CARD"
-   - System generates request ID and logging context
-   - Input validation performed:
-     - Card number must be 16 digits
-     - Password must be 8-13 characters long
-     - HTTP Referer must be valid
-
-2. **Mod-10 Check (Luhn Algorithm)**
-   - Card number is validated using the mod10Check algorithm to ensure it's a valid card format
-   - Failure at this step returns error code 601
-
-3. **BIN Range Validation**
-   - System retrieves BIN ranges from cache or calls creditCardUtilityV3Client.getBinRanges()
-   - Validates that card BIN falls within acceptable ranges for commercial credit cards
-   - Validates product code is supported for commercial use
-   - Failure returns error code 608
-
-### 2. Customer Type Verification
-
-1. **Party Information Retrieval**
-   - System calls getFinancialSnapshot to retrieve customer information
-   - Extracts customerType - must be "0" (Organization) for commercial credit cards
-   - If customerType is "0", system sets customerIdentifier = "COMMERCIAL_DEBIT_CARD"
-   - Validates customer type with customerTypeResolver.validateCustomerType()
-   - Retail customers ("P") using commercial flow are rejected
-
-2. **OTP Lock Status Validation**
-   - System skips validateOTPLockStatus() for commercial customers
-   - Log entry: "Skip validateOTPLock for commercial card"
-
-### 3. Card Status Verification
-
-1. **Debit Card Details Retrieval**
-   - System calls getDebitCardDetails() to retrieve full card information
-   - Retrieves card status, association information, registration date
-
-2. **Card Status Check**
-   - checkCardStatus() verifies card is not in any of these states:
-     - "2" (Compromised) - returns error code 901
-     - "3" (Captured) - returns error code 905
-     - "4" (Inactive) - returns error code 608
-     - "X" (Compromise Exceeded) - returns error code 902
-     - "S" (Lost or Stolen) - returns error code 903
-     - "0" (Card on Order) - returns error code 904
-
-3. **Registration Check**
-   - Verifies tbRegisterDate is not null
-   - If null, card is not registered for online banking and returns error code 801
-
-### 4. Credential Validation
-
-1. **ISDS Validation**
-   - System calls initialISDSValidations() to check for credential suspension
-   - Verifies credential is not in SOFT_LOCKED or HARD_LOCKED state
-
-2. **Credential Authentication**
-   - For ISDS flow:
-     - Calls isdsValidations() which uses AuthenticatorISDS.authenticate()
-     - Based on credential type, uses either hashAuth() or legacyAuth()
-   - For legacy database flow:
-     - Uses AuthenticatorDAO.authenticate() to validate credentials with database
-     - Uses OLB_PASSWORD_ENHANCEMENT_PRG.OLB_Password_SSP stored procedure
-     - Updates bad password count on success with updateBadPasswordCountForDebit()
-
-3. **Temporary Password Check**
-   - findTemporaryPassword() checks if user has a temporary password
-   - If temporary password exists and is not expired - error code 605
-   - If temporary password exists and is expired - error code 906
-
-### 5. Risk Assessment
-
-1. **RSA User Status Check**
-   - System calls rsaQuery() to verify RSA user status
-   - Status must be "VERIFIED" to proceed
-   - "DELETED" status returns error code 704
-   - Other non-verified statuses return error code 702
-
-2. **TMX Fraud Detection**
-   - For commercial customers, TMX integration is skipped
-   - System sets tmxParam.setUserStatus(null)
-   - Log entry: "Setting userStatus to null for commercial card"
-
-3. **RSA Risk Analysis**
-   - System calls rsaAnalyze() with factList (without TMX data)
-   - RSA returns risk policy which can be:
-     - ALLOW (low risk, no challenges required)
-     - CHALLENGE (medium risk, requires additional verification)
-     - DENY (high risk, authentication rejected)
-
-### 6. Challenge Flow (if required)
-
-1. **RSA Challenge for Commercial**
-   - If RSA returns CHALLENGE policy for commercial customers:
-     - System calls rsaChallenge() API directly
-     - Unlike retail flow, does not use OTP methods
-     - Sets authentication level to "2" (challenge required)
-
-2. **Header Setup**
-   - For RSA challenges, system calls setAuthenticationResponseHeaderVerifyChallenge()
-   - Sets x_bmo_rsa_session_id with RSA session ID
-   - Sets am-eai-auth-level to "2"
-   - Publishes EventStatus.SUCCESS event (different from retail flow)
-
-3. **Challenge Response**
-   - System returns RSA challenge response to client
-   - Client must complete RSA verification to proceed
-
-### 7. Authentication Completion
-
-1. **Proxy ID Retrieval**
-   - For ALLOW policy, system retrieves proxy ID:
-     - Calls getProxyId(ecifId, "100058", "ECIF", proxyIdType, proxyIdValue, reqBean, deviceTokenCookie)
-     - Uses invokePartyIdentificationV5() to call PartyIdentificationV5Client
-
-2. **Direct Authentication**
-   - If RSA returns ALLOW policy:
-     - System calls setAuthenticationResponseHeaderWhenSkipVerifyChallenge()
-     - Sets authentication level to "5" (fully authenticated for commercial)
-     - Adds x_bmo_proxyid header with retrieved proxy ID
-     - Publishes EventStatus.SUCCESS event
-     - Returns authentication success to client
-
-3. **Error Handling**
-   - If authentication fails at any step:
-     - System publishes EventStatus.FAILURE event with appropriate reason code
-     - Returns error response with appropriate error code and message
-     - All error codes and messages are standardized and localized
-
-## Error Codes and Handling
-
-| Error Code | Description |
-|------------|-------------|
-| 501 | System error or service unavailable |
-| 601 | Invalid card number or password |
-| 603 | Password locked |
-| 604 | Replacement card being used |
-| 605 | Temporary password exists |
-| 606 | Customer type not supported |
-| 607 | Incorrect password |
-| 608 | Invalid BIN range or inactive card |
-| 609 | Card is suspended - possible fraud |
-| 702 | RSA user status not verified |
-| 703 | RSA user locked out |
-| 704 | RSA service error |
-| 705 | RSA risk policy deny |
-| 801 | Card not registered for online banking |
-| 901 | Card is compromised |
-| 902 | Compromise exceeded |
-| 903 | Card is lost or stolen |
-| 904 | Card on order |
-| 905 | Card is captured |
-| 906 | Temporary password expired |
-
-## Account Lockout Logic
-
-- Password attempts are tracked in the backend database
-- After 3 failed password attempts, the account becomes locked (error code 603)
-- Commercial customers do not use OTP verification
-- Password locks require customer service intervention to reset
-
-## Security Features
-
-1. **Multi-layered Validation**
-   - Card format and BIN validation
-   - Mod-10 algorithm check
-   - Password complexity and validity checks
-   - Registration status validation
-
-2. **Commercial-Specific Security**
-   - Proxy ID retrieval and validation
-   - Higher authentication level (Level "5")
-   - RSA challenge instead of OTP
-   - Different header management approach
-
-3. **Risk-Based Authentication**
-   - RSA risk analysis based on multiple factors
-   - Step-up authentication for medium-risk scenarios
-   - Complete rejection for high-risk scenarios
-
-4. **Account Protection**
-   - Password lockout after multiple failed attempts
-   - Specialized commercial account handling
-
-## Events and Auditing
-
-All authentication attempts, successes, and failures are recorded and published to the LoginEventPublisher with:
-
-1. **Event Status**
-   - SUCCESS: Successful authentication or challenge initiated (different from retail)
-   - FAILURE: Failed authentication with reason code
-
-2. **Context Information**
-   - Device information
-   - IP address
-   - Card number (masked)
-   - Timestamp
-   - Channel information
-   - Commercial customer type
-
-3. **Risk Information**
-   - RSA risk policy and rule details
-   - Device binding status
-   - No TMX data (skipped for commercial)
-
-## Special Conditions Handling
-
-1. **Company Information**
-   - For commercial customers, extracts company name instead of first/last name
-   - Sets company name in x_bmo_firstname header
-
-2. **Proxy ID Management**
-   - Retrieves proxy ID through PartyIdentificationV5Client
-   - Adds to response headers as x_bmo_proxyid
-   - Only done for commercial customers
-
-3. **Authentication Level**
-   - Uses higher authentication level (5) for commercial customers
-   - Different from retail authentication level (4)
-
-4. **Challenge Mechanism**
-   - Uses RSA challenge instead of OTP/MFA
-   - Different event publishing (SUCCESS vs ATTEMPT)
-   - Different header management
-
-## Commercial-Specific Headers
-
-- x_bmo_proxyid: Contains the proxy ID for commercial customers
-- am-eai-auth-level: Set to "5" for fully authenticated commercial customers
-- am-eai-user-id: Formatted as hashedFBC.toUpperCase() + "@ciam"
-- x_bmo_customer_type: Set to commercial identifier
-
-## Sequence Flow Diagram
-
-```
-[See detailed sequence diagram in separate artifact]
+// ISDS might have different normalization
+String normalizedCredential = ISDSServiceUtils.toIsamUserAlias(credential);
+// If normalizedCredential removes leading zeros, authentication will fail
 ```
 
-This document comprehensively covers the authentication process for BMO commercial credit cards, including all validation steps, security features, and error handling mechanisms. The flow highlights the key differences from the retail debit card authentication process, particularly in the areas of fraud detection, challenge mechanisms, and header management.
+**Real-world impact:** Customers with certain card number formats might suddenly be unable to log in.
+
+## 2. Temporary Password Status Detection
+
+### Scenario: Temporary Password With Special Status
+**Data Example:**
+- Customer has temporary password status code: "TEMP_SPECIAL" in database
+- Old code specifically checked for this status code
+- ISDS has a different representation of this status
+
+**Potential Breakage:**
+```java
+// Database code
+if ("TEMP_SPECIAL".equals(tempPasswordInfo.getStatusType())) {
+    // Special handling for this case
+    return ErrorCodeDTO._606;
+} 
+
+// ISDS might not have the same status type or might encode it differently
+if (isdsDto.getCredentialStatus() == ISDSServiceUtils.CREDENTIAL_STATUS_TEMPORARY_PASSWORD) {
+    // Generic handling without special case
+    return ErrorCodeDTO._605; // Different error code!
+}
+```
+
+**Real-world impact:** Customers might receive incorrect error messages or be allowed to proceed when they shouldn't be.
+
+## 3. Suspension Reason Mapping
+
+### Scenario: Card Suspended Due to Fraud Investigation
+**Data Example:**
+- Database has suspension reason code: "FRAUD_INVEST" with status flag 1
+- Database code returns specific error code 609
+- ISDS might have different coding for suspension reasons
+
+**Potential Breakage:**
+```java
+// Database approach
+if (results.getInt("status_flag") == 1) {
+    cardSuspensionReason = results.getString("locked_reason");
+    if ("FRAUD_INVEST".equalsIgnoreCase(cardSuspensionReason)) {
+        result = 2; // Special handling code
+        errorCode = "609";
+    }
+}
+
+// ISDS might not expose the same granular reason codes
+if (isdsHelper.isSuspended()) {
+    // Generic suspension detection without reason
+    errorCode = "603"; // Different error code!
+}
+```
+
+**Real-world impact:** Fraud cases might not be properly flagged, leading to inconsistent error messages and potential security issues.
+
+## 4. Account Lockout Counting
+
+### Scenario: Failed Authentication Attempts
+**Data Example:**
+- Customer has 2 failed attempts in database
+- Next failed attempt should lock the account
+- ISDS might track attempts differently or reset the counter during migration
+
+**Potential Breakage:**
+```java
+// Database directly updated counter
+authenticatorDao.updateBadPasswordCountForDebit(username);
+// Counter tracked in database, next failure locks account
+
+// ISDS implementation
+// If counter is not synchronized or reset during migration
+// Customer might get more than allowed attempts before lockout
+```
+
+**Real-world impact:** Security vulnerability where customers get more authentication attempts than they should.
+
+## 5. Card Status Check Differences
+
+### Scenario: Card in "Pre-Activation" Status
+**Data Example:**
+- Database has card status "P" (pre-activation)
+- Custom handling in database code treats this as inactive (status code 4)
+- ISDS might use a different status coding system
+
+**Potential Breakage:**
+```java
+// Database approach with custom mapping
+if ("P".equals(cardStatus)) {
+    // Treat as status 4 (inactive)
+    errorCode = "608";
+}
+
+// ISDS might have different status code that doesn't map the same way
+if (getCardDetailsRequestHubResponseDTO.getCardStatus().equals("4")) {
+    // Only checking for explicit inactive status, missing "P"
+    errorCode = "608";
+}
+```
+
+**Real-world impact:** Cards in certain statuses might be incorrectly allowed or prevented from authenticating.
+
+## 6. Error Code Translation
+
+### Scenario: Database-Specific Error Codes
+**Data Example:**
+- Database procedure returns error code 8045 (internal procedure code)
+- Old code mapped this to application error 704
+- ISDS returns different error code for the same condition
+
+**Potential Breakage:**
+```java
+// Database error handling
+catch (SQLException e) {
+    if (e.getErrorCode() == 8045) {
+        throw new AuthenticationException(
+            ErrorCodeDTO._704.toString(),
+            MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._704.toString())
+        );
+    }
+}
+
+// ISDS error handling
+catch (ChannelsBusinessException e) {
+    // Different error code for same condition
+    throw new AuthenticationException(
+        ErrorCodeDTO._501.toString(), // General system error instead of specific code
+        MapperUtils.getErrorMessage(errorCodeMappingString, ErrorCodeDTO._501.toString())
+    );
+}
+```
+
+**Real-world impact:** Systems that depend on specific error codes for business processes might break, and different error messages might confuse users.
+
+## 7. Transaction Timing Issues
+
+### Scenario: Near-Simultaneous Authentication Attempts
+**Data Example:**
+- Customer attempts login twice within milliseconds
+- Database handled this transactionally, recording both attempts
+- ISDS API calls might not maintain the same order or atomicity
+
+**Potential Breakage:**
+```java
+// Database approach (transactional)
+// Both operations happen in a single transaction
+conn = jdbcTemplateOne.getDataSource().getConnection();
+// Check authentication + Update attempt count in one transaction
+
+// ISDS approach (multiple API calls)
+AuthenticationResult result = isdsHelper.authenticate(cardNumber, password);
+// Separate API call to update attempt count
+// If the second call fails, state becomes inconsistent
+```
+
+**Real-world impact:** Race conditions could lead to authentication state inconsistencies or security vulnerabilities.
+
+## 8. Timing-Based Validations
+
+### Scenario: Expired Temporary Password
+**Data Example:**
+- Temporary password expired 1 minute ago
+- Database code checked expiry against current database time
+- ISDS might use a different time source with slight difference
+
+**Potential Breakage:**
+```java
+// Database approach
+Date todayDate = new Date();
+if (tempPasswordInfo.getExpiryDate() != null && todayDate.after(tempPasswordInfo.getExpiryDate())) {
+    // Password is expired
+    throw new AuthenticationException(EXP_TEMP_PSWD, ...);
+}
+
+// ISDS approach
+// If ISDS server time and application server time differ slightly
+// A password might be considered expired in one system but not the other
+```
+
+**Real-world impact:** Customers might be incorrectly allowed to use expired credentials or vice versa.
+
+## 9. Card Replacement Handling
+
+### Scenario: Customer Using Replacement Card
+**Data Example:**
+- Old card number: "4500123456781234"
+- New replacement card: "4500123456785678" 
+- Database had specific lookup for replacement card relationship
+- ISDS might not maintain the same relationship or require different lookup
+
+**Potential Breakage:**
+```java
+// Database approach for replacement cards
+if (ErrorCodeDTO._601.toString().equalsIgnoreCase(e.getCode())
+        && "0000000000000000".equals(dbParam.getPreviousCardNumber())) {
+    // Try authentication with previous card
+    ar = authenticatorDao.authenticate(dbParam.getPreviousCardNumber(), validateUser.getPassword());
+    // Special error code for replacement card scenario
+    throw new AuthenticationException(ErrorCodeDTO._604.toString(), ...);
+}
+
+// ISDS approach might not have the same detection method
+// or might normalize card numbers differently
+```
+
+**Real-world impact:** Customers with replacement cards might get generic "invalid credentials" errors instead of helpful guidance.
+
+## 10. Custom Business Rules
+
+### Scenario: Special Card BIN Range Validation
+**Data Example:**
+- Card BIN range: "450000-455999" has special validation rules
+- Database code had custom validation logic for this range
+- ISDS might not implement the same special case handling
+
+**Potential Breakage:**
+```java
+// Database custom validation
+if (cardBinDigits >= 450000 && cardBinDigits <= 455999) {
+    // Apply special validation rules for premium cards
+    boolean validProductCode = customerTypeResolver.validateProductCode(
+            customerIdentifier, binHubDTO.getProductCode(), deviceTokenCookie, detailsToLog);
+    // Special rules for this BIN range
+}
+
+// ISDS might apply generic validation to all BIN ranges
+// Missing the special case handling
+```
+
+**Real-world impact:** Certain card types might not get their required special handling, leading to incorrect authentication results.
+
+## Recommended Mitigation Strategies
+
+To prevent these specific breakage scenarios:
+
+1. **Comprehensive Data Testing**:
+   - Test with a wide variety of real-world data examples
+   - Include edge cases like leading zeros, special statuses, etc.
+
+2. **Side-by-Side Validation**:
+   - Run both authentication methods in parallel
+   - Log discrepancies for analysis before cutting over
+
+3. **Error Code Mapping Layer**:
+   - Create a dedicated mapping layer to ensure consistent error codes
+   - Match ISDS error responses to existing application error codes
+
+4. **Synchronization Period**:
+   - Implement a synchronization period where both systems update account statuses
+   - Ensure counters and statuses are synchronized before full migration
+
+5. **Robust Logging**:
+   - Add detailed logging around sensitive operations
+   - Enable easy comparison between old and new flows during testing
+
+By addressing these specific scenarios and implementing these mitigation strategies, you can significantly reduce the risk of breaking existing functionality during the migration to ISDS-based authentication.
