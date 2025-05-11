@@ -1,1 +1,111 @@
 
+sequenceDiagram
+    autonumber
+    
+    actor Client
+    participant AuthSvcV2 as AuthenticationServiceV2
+    participant HelperV2 as AuthenticationServiceHelperV2
+    participant ISDSHelp as ISDSHelper
+    participant AuthDAO as AuthenticatorDAO
+    participant Feign as FeignHttpServiceImpl
+    participant CardUtil as CreditCardUtilityV3Client
+    participant PartyId as PartyIdentificationV5Client
+    participant RSA_API as RSA Services
+    participant EventPub as LoginEventPublisher
+    
+    Client->>AuthSvcV2: authenticate(creditCardNumber, password, customerIdentifier="COMMERCIAL_DEBIT_CARD")
+    Note over AuthSvcV2: Generate request ID & context
+    
+    AuthSvcV2->>ISDSHelp: getIsdsGetCredentialResponse(creditCardNumber)
+    ISDSHelp-->>AuthSvcV2: Return credential details
+    
+    Note over AuthSvcV2: Extract deviceTokenCookie, hashedFBC
+    
+    AuthSvcV2->>HelperV2: clientValidations(validateUser, restTemplate, referer, reqBean, ...)
+    Note over HelperV2: Validate card number (16 digits)<br/>Perform mod10Check()<br/>Validate password (8-13 chars)<br/>Validate HTTP referer
+    
+    HelperV2->>Feign: creditCardUtilityV3Client.getBinRanges(reqBean)
+    Feign->>CardUtil: Get BIN ranges
+    CardUtil-->>Feign: Return BIN list
+    Feign-->>HelperV2: Return BIN list
+    
+    Note over HelperV2: Check if card BIN is in valid range
+    Note over HelperV2: Validate product code for commercial
+    HelperV2-->>AuthSvcV2: Return validation result
+    
+    AuthSvcV2->>Feign: getFinancialSnapshot(requestHeaders, retrievePartyRequest)
+    Feign-->>AuthSvcV2: Return party information
+    
+    Note over AuthSvcV2: Extract customerType "0" (commercial)
+    Note over AuthSvcV2: Set customerIdentifier = "COMMERCIAL_DEBIT_CARD"
+    
+    AuthSvcV2->>HelperV2: customerTypeResolver.validateCustomerType(customerIdentifier, customerType, deviceTokenCookie, detailsLogString)
+    HelperV2-->>AuthSvcV2: Return validation result
+    
+    Note over AuthSvcV2: Skip validateOTPLockStatus for commercial card
+    
+    AuthSvcV2->>HelperV2: initialISDSValidations(loginCredential, dbValidationParam, loginEvent, isdsDto)
+    HelperV2-->>AuthSvcV2: Return validation result
+    
+    AuthSvcV2->>Feign: getDebitCardDetails(requestHeaders, cardDetailsRequest)
+    Feign-->>AuthSvcV2: Return card details
+    
+    AuthSvcV2->>HelperV2: checkCardStatus(debitCardDetails, detailsLogString, deviceTokenCookie, loginEvent)
+    HelperV2-->>AuthSvcV2: Return validation result
+    
+    Note over AuthSvcV2: Get tbRegisterDate from debitCardDetails
+    Note over AuthSvcV2: Fail if tbRegisterDate is null (card not registered)
+    
+    Note over AuthSvcV2: Set userStatus = null for commercial card (TMX not used)
+    
+    AuthSvcV2->>HelperV2: isdsValidations(null, validateUser, loginCredential, dbValidationParam, tmxParam, loginEvent, isdsDto)
+    Note over HelperV2: Authenticate with ISDS or database
+    
+    alt Authentication fails
+        HelperV2-->>AuthSvcV2: Return authentication failure
+        AuthSvcV2->>EventPub: publishPasswordEvent(FAILURE)
+        AuthSvcV2-->>Client: Return authentication error
+    else Authentication successful
+        HelperV2-->>AuthSvcV2: Return authentication success
+        
+        AuthSvcV2->>Feign: rsaQuery(rsaQueryRequest)
+        Feign->>RSA_API: Call RSA Query API
+        RSA_API-->>Feign: Return RSA status
+        Feign-->>AuthSvcV2: Return RSA status
+        
+        Note over AuthSvcV2: Skip TMX call for commercial card
+        
+        AuthSvcV2->>Feign: rsaAnalyze(apiRequestDto with factList)
+        Feign->>RSA_API: Call RSA Analyze
+        RSA_API-->>Feign: Return risk assessment
+        Feign-->>AuthSvcV2: Return RSA result
+        
+        Note over AuthSvcV2: Extract sessionId, transactionId
+        AuthSvcV2->>HelperV2: setGenericAuthenticationResponseHeader(headers, ...)
+        
+        alt RSA Risk Policy = CHALLENGE
+            AuthSvcV2->>Feign: rsaChallenge(apiRequestDto)
+            Feign->>RSA_API: Call RSA Challenge API
+            RSA_API-->>Feign: Return challenge details
+            Feign-->>AuthSvcV2: Return challenge response
+            
+            AuthSvcV2->>HelperV2: setAuthenticationResponseHeaderVerifyChallenge(...)
+            AuthSvcV2->>EventPub: publishPasswordEvent(SUCCESS)
+            AuthSvcV2-->>Client: Return RSA challenge response
+        else RSA Risk Policy = ALLOW
+            Note over AuthSvcV2: Get proxyId for commercial customer
+            AuthSvcV2->>HelperV2: getProxyId(ecifId, "100058", "ECIF", proxyIdType, proxyIdValue, reqBean, deviceTokenCookie)
+            HelperV2->>Feign: invokePartyIdentificationV5(searchIdNumber, searchIdType, ...)
+            Feign->>PartyId: getPartyIdentification(request, headers)
+            PartyId-->>Feign: Return identification response
+            Feign-->>HelperV2: Return proxy ID
+            HelperV2-->>AuthSvcV2: Return proxy ID
+            
+            AuthSvcV2->>HelperV2: setAuthenticationResponseHeaderWhenSkipVerifyChallenge(...)
+            AuthSvcV2->>EventPub: publishPasswordEvent(SUCCESS)
+            AuthSvcV2-->>Client: Return authentication success with proxyId header
+        else RSA Risk Policy = DENY
+            AuthSvcV2->>EventPub: publishPasswordEvent(FAILURE)
+            AuthSvcV2-->>Client: Return authentication error
+        end
+    end
