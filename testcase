@@ -1,11 +1,13 @@
-I have been able to manage and incorporate the CIAM-related changes made by PBB into the Open Banking project. Over the past five days, additional updates have been implemented by VME/PBB, which I will start integrating from today.
-Below are the code commits representing the changes I’ve completed so far.
+ast week’s session with Kevin and Jason was helpful in getting some foundational understanding, and I’ve been able to get started with development based on that. I’ve incorporated the CIAM-related changes previously done by PBB into the Open Banking project. In the past five days, VME/PBB made additional updates, and I’ve started integrating those as well.
 
-As of now, no other channel services support both debit card and commercial credit flows. This was confirmed during the last SA walkthrough. I am currently preparing documentation of the existing flow, which may help both the BA and SA assess whether further changes are needed to support CIAM.
+The code commits below represent the changes I’ve completed so far.
 
-Additionally, I’m working on a gap analysis of the error codes between the existing and updated flows. This requires more time, as I am still performing reverse engineering by analyzing the codebase.
+As of now, no other channel services support both debit card and commercial credit flows. During the last SA walkthrough, the architect was not aware that Open Banking supports both, and we clarified this during the session. I'm now preparing documentation of the current flow to help the BA and SA assess if any changes are required to support CIAM.
 
-I will initiate discussions to promote my completed changes to the SIT4 environment.
+I’m also working on a gap analysis of the error codes between the existing and updated flows. This is taking additional time as I am performing reverse engineering by analyzing the codebase.
 
-The consent-related changes are still unclear. A detailed walkthrough is needed to address this. Otherwise, I may need to perform a similar reverse engineering exercise as I’m currently doing for the authentication API.
+I’ll initiate discussions soon to promote the completed changes into the SIT4 environment.
 
+Consent-related changes are still unclear. A detailed walkthrough would help clarify them. If that’s not available, I’ll need to follow the same reverse engineering approach I’ve used for the authentication API.
+
+Let me know if you'd like to go over any part in more detail.
