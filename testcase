@@ -1,13 +1,7 @@
-ast week’s session with Kevin and Jason was helpful in getting some foundational understanding, and I’ve been able to get started with development based on that. I’ve incorporated the CIAM-related changes previously done by PBB into the Open Banking project. In the past five days, VME/PBB made additional updates, and I’ve started integrating those as well.
+We definitely need to focus more on the following three areas. I’ll aim to complete as much of the existing code work as possible this week and begin the process to promote the changes:
 
-The code commits below represent the changes I’ve completed so far.
+Assess whether any additional changes are required for supporting both debit and commercial credit card flows.
 
-As of now, no other channel services support both debit card and commercial credit flows. During the last SA walkthrough, the architect was not aware that Open Banking supports both, and we clarified this during the session. I'm now preparing documentation of the current flow to help the BA and SA assess if any changes are required to support CIAM.
+Refine the story for the consent flow to ensure clarity and alignment.
 
-I’m also working on a gap analysis of the error codes between the existing and updated flows. This is taking additional time as I am performing reverse engineering by analyzing the codebase.
-
-I’ll initiate discussions soon to promote the completed changes into the SIT4 environment.
-
-Consent-related changes are still unclear. A detailed walkthrough would help clarify them. If that’s not available, I’ll need to follow the same reverse engineering approach I’ve used for the authentication API.
-
-Let me know if you'd like to go over any part in more detail.
+Complete the gap analysis by next week, and upon completion, I’ll seek quick approval from the architect and proceed with implementation.
