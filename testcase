@@ -1,7 +1,126 @@
-We definitely need to focus more on the following three areas. I’ll aim to complete as much of the existing code work as possible this week and begin the process to promote the changes:
+# Authentication Flow for Commercial Customers
 
-Assess whether any additional changes are required for supporting both debit and commercial credit card flows.
+## Executive Summary
+Commercial card customers do go through a challenge question flow if RSA risk policy requires additional verification. This is different from retail customers who receive OTP challenges instead.
 
-Refine the story for the consent flow to ensure clarity and alignment.
+## Key Code Evidence
 
-Complete the gap analysis by next week, and upon completion, I’ll seek quick approval from the architect and proceed with implementation.
+### 1. Commercial customers receive challenge questions when RSA risk policy is "CHALLENGE"
+
+```java
+// From AuthenticationServiceV2.java
+if ("CHALLENGE".equalsIgnoreCase(responseBody.getRiskPolicy())) {
+    if (AppConstants.CUSTOMER_TYPE_COMMERCIAL.equalsIgnoreCase(customerType)) {
+        try {
+            logger.debug("| Event: 12. CHALLENGE - calling RSA challenge for COMMERCIAL. |" + detailsLogOnly);
+            ResponseDTO respDto = feignHttpServiceImpl.rsaChallenge(
+                TransformationUtilV2.createRequestDTO(
+                    dbValidationParam,
+                    validateUser.getUsername(),
+                    runRiskType,
+                    channelIndicator,
+                    persistent,
+                    orgName,
+                    "",
+                    channelType,
+                    responseBody.getSessionId(),
+                    responseBody.getTransactionId()
+                )
+            );
+            
+            // Process RSA Challenge response and return to user
+            return new ResponseEntity<>(
+                scAdapterObjectMapper.readValue(
+                    TransformationUtilV2.getRAChallengeResDto(respDto, scAdapterObjectMapper),
+                    RSAChallengeResDTO.class
+                ),
+                headers,
+                HttpStatus.OK
+            );
+        }
+    }
+}
+```
+
+### 2. Retail customers receive OTP challenges - different from commercial
+
+```java
+// RSA CHALLENGE for RETAIL customers
+else if (AppConstants.CUSTOMER_TYPE_RETAIL.equalsIgnoreCase(customerType)) {
+    logger.info("|Event: 12. CHALLENGE - calling RSA challenge for RETAIL"
+        + " | CardType: " + customerType
+        + " | Event: Challenge With OTP"
+        + " | RSA Transaction Id: " + transactionId);
+        
+    // Return OTP challenge for retail customers
+    return new ResponseEntity<>(
+        scAdapterObjectMapper.readValue(
+            TransformationUtilV2.getOTPChallengeResDto(scAdapterObjectMapper, deviceTokenCookie),
+            RSAChallengeResDTO.class
+        ),
+        headers,
+        HttpStatus.OK
+    );
+}
+```
+
+### 3. Commercial customers have special header configurations 
+
+```java
+public void setAuthenticationResponseHeaderWhenSkipVerifyChallenge(
+        HttpHeaders headers,
+        String customerType,
+        String proxyId,
+        String detailsLogOnly
+) {
+    if (customerType.equalsIgnoreCase(AppConstants.CUSTOMER_TYPE_COMMERCIAL)) {
+        headers.add("x_bmo_proxyid", proxyId);
+        headers.add("am-eai-xattrs",
+                "x_bmo_fso_token,x_bmo_fbe,x_bmo_customer_type,x_bmo_ecifid," +
+                        "x_bmo_firstname,x_bmo_lastname,x_bmo_proxyid");
+
+        if (headers.get("am-eai-auth-level") == null) {
+            headers.put("am-eai-auth-level", Arrays.asList("5"));
+        } else {
+            headers.add("am-eai-auth-level", "5");
+        }
+    } else {
+        // Different auth level for retail
+        if (headers.get("am-eai-auth-level") != null) {
+            headers.put("am-eai-auth-level", Arrays.asList("4"));
+        } else {
+            headers.add("am-eai-auth-level", "4");
+        }
+    }
+}
+```
+
+### 4. Additional verification for commercial authentication
+
+```java
+helperV2.setAuthenticationResponseHeaderVerifyChallenge(
+    headers,
+    sessionId,
+    customerType,
+    proxyId,
+    tmxRequestId,
+    detailsLogOnly
+);
+
+reasonCode = "OTP";
+
+logger.info("|Event: 12. additional call for ERE, entering edf topic method ... |" + detailsLogOnly);
+populateLoginEventType(loginEvent, AppConstants.OPBKUSER);
+loginEventPublisher.publishPasswordEvent(
+    loginEvent,
+    EventStatus.SUCCESS,
+    tmxResponseData,
+    rsaResponseData,
+    deviceBinding,
+    reasonCode,
+    detailsLogOnly
+);
+```
+
+## Conclusion
+The authentication system definitely processes commercial card customers differently than retail customers, with commercial users receiving challenge questions when the RSA risk policy requires additional verification. This is clearly demonstrated in the code logic that handles the two customer types separately.
