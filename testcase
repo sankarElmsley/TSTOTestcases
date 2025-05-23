@@ -1,129 +1,87 @@
-package com.bmo.channels.api.authentication.helper;
+ Camunda BPM in Insurance:
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.mockito.junit.MockitoJUnitRunner;
-import org.mockito.junit.MockitoSettings;
-import org.mockito.quality.Strictness;
+Claims Processing Automation
 
-import javax.servlet.http.HttpServletRequest;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Map;
 
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.when;
+Use AI to automatically:
 
-@RunWith(MockitoJUnitRunner.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
-public class ScHeaderProviderTest {
+Classify and categorize incoming claims
+Extract key information from claim documents
+Assess initial claim validity
+Route claims to appropriate processing paths
+Predict potential fraud risks
 
-    @Mock
-    private HttpServletRequest mockRequest;
-    
-    private ScHeaderProvider scHeaderProvider;
-    
-    private final String appCatId = "83815";
-    private final String financialId = "001";
-    
-    @Before
-    public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        scHeaderProvider = new ScHeaderProvider(mockRequest, appCatId, financialId);
-    }
-    
-    @Test
-    public void testGetHeaders_NoHeaders() {
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.emptyEnumeration());
-        
-        Map<String, String> headers = scHeaderProvider.getHeaders();
-        
-        assertNotNull(headers);
-        assertEquals(2, headers.size());
-        assertTrue(headers.containsKey("X-FAPI-FINANCIAL-ID"));
-        assertTrue(headers.containsKey("X-APP-CAT-ID"));
-    }
-    
-    @Test
-    public void testGetHeaders_WithForwardableHeaders() {
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(Arrays.asList(
-                "x-api-key", "user-agent", "Authorization", "random-header")));
-        when(mockRequest.getHeader("x-api-key")).thenReturn("test-key");
-        when(mockRequest.getHeader("user-agent")).thenReturn("Mozilla/5.0");
-        when(mockRequest.getHeader("Authorization")).thenReturn("Bearer token");
-        when(mockRequest.getHeader("random-header")).thenReturn("value");
-        
-        Map<String, String> headers = scHeaderProvider.getHeaders();
-        
-        assertEquals(5, headers.size()); // 3 forwardable + 2 defaults
-        assertEquals("test-key", headers.get("X-API-KEY"));
-        assertEquals("Mozilla/5.0", headers.get("USER-AGENT"));
-        assertEquals("Bearer token", headers.get("AUTHORIZATION"));
-        assertFalse(headers.containsKey("RANDOM-HEADER")); // Not forwardable
-    }
-    
-    @Test
-    public void testGetHeaders_EmptyAndNullValues() {
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(Arrays.asList(
-                "x-api-key", "user-agent")));
-        when(mockRequest.getHeader("x-api-key")).thenReturn("");
-        when(mockRequest.getHeader("user-agent")).thenReturn(null);
-        
-        Map<String, String> headers = scHeaderProvider.getHeaders();
-        
-        assertEquals(2, headers.size()); // Only defaults
-        assertFalse(headers.containsKey("X-API-KEY"));
-        assertFalse(headers.containsKey("USER-AGENT"));
-    }
-    
-    @Test
-    public void testGetHeaders_DefaultHeadersAlwaysIncluded() {
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.emptyEnumeration());
-        
-        Map<String, String> headers = scHeaderProvider.getHeaders();
-        
-        assertEquals(financialId, headers.get("X-FAPI-FINANCIAL-ID"));
-        assertEquals(appCatId, headers.get("X-APP-CAT-ID"));
-    }
-    
-    @Test
-    public void testGetHeaders_CaseInsensitive() {
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(Arrays.asList("X-API-KEY")));
-        when(mockRequest.getHeader("X-API-KEY")).thenReturn("test-value");
-        
-        Map<String, String> headers = scHeaderProvider.getHeaders();
-        
-        assertTrue(headers.containsKey("X-API-KEY"));
-        assertEquals("test-value", headers.get("X-API-KEY"));
-    }
-    
-    @Test
-    public void testShouldBeForwarded_ForwardableHeaders() {
-        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-api-key"));
-        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("user-agent"));
-        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("Authorization"));
-        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("clientId"));
-    }
-    
-    @Test
-    public void testShouldBeForwarded_NonForwardableHeaders() {
-        assertFalse(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-fapi-financial-id"));
-        assertFalse(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-app-cat-id"));
-        assertFalse(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("random-header"));
-    }
-    
-    @Test
-    public void testShouldBeForwarded_CaseInsensitive() {
-        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("X-API-KEY"));
-        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("USER-AGENT"));
-    }
-    
-    @Test
-    public void testHttpHeaderKeyMethods() {
-        assertEquals("x-api-key", ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode());
-        assertEquals("x-api-key", ScHeaderProvider.HttpHeaderKey.X_API_KEY.toString());
-    }
-}
+
+
+
+Underwriting Enhancement
+
+
+AI-powered risk assessment
+
+Analyze complex risk factors
+Generate more accurate pricing models
+Automate initial underwriting decisions
+Provide real-time risk scoring
+Recommend personalized insurance products
+
+
+
+
+Customer Service Optimization
+
+
+AI-driven chatbots integrated with Camunda workflows
+
+Handle initial customer inquiries
+Guide customers through policy applications
+Provide personalized policy recommendations
+Automate first-level support processes
+
+
+
+
+Predictive Maintenance for Commercial Insurance
+
+
+Use machine learning to:
+
+Predict potential equipment failures
+Assess risk in industrial/commercial policies
+Recommend preventive maintenance strategies
+Dynamically adjust insurance coverage
+
+
+
+
+Fraud Detection
+
+
+AI algorithms to:
+
+Identify suspicious claim patterns
+Flag potentially fraudulent applications
+Trigger detailed investigation workflows
+Continuously learn and improve fraud detection
+
+
+
+
+Document Processing
+
+
+AI-powered document intelligence
+
+Automated document classification
+Intelligent data extraction
+Validate document completeness
+Reduce manual data entry errors
+
+
+
+Technical Integration Approaches:
+
+Use AI microservices alongside Camunda
+Implement AI models as external service tasks
+Leverage machine learning APIs
+Create custom AI connectors for Camunda
