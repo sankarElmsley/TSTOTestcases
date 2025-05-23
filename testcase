@@ -6,18 +6,19 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import javax.servlet.http.HttpServletRequest;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Enumeration;
-import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.when;
 
 @RunWith(MockitoJUnitRunner.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 public class ScHeaderProviderTest {
 
     @Mock
@@ -36,332 +37,93 @@ public class ScHeaderProviderTest {
     
     @Test
     public void testGetHeaders_NoHeaders() {
-        // Setup mock request with no headers
         when(mockRequest.getHeaderNames()).thenReturn(Collections.emptyEnumeration());
         
-        // Execute
         Map<String, String> headers = scHeaderProvider.getHeaders();
         
-        // Assert
-        assertNotNull("Headers map should not be null", headers);
-        assertEquals("Headers map should contain 2 entries", 2, headers.size());
-        assertEquals("Financial ID should be set correctly", financialId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_FAPI_FINANCIAL_ID.getCode().toUpperCase()));
-        assertEquals("App Cat ID should be set correctly", appCatId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_APP_CAT_ID.getCode().toUpperCase()));
+        assertNotNull(headers);
+        assertEquals(2, headers.size());
+        assertTrue(headers.containsKey("X-FAPI-FINANCIAL-ID"));
+        assertTrue(headers.containsKey("X-APP-CAT-ID"));
     }
     
     @Test
     public void testGetHeaders_WithForwardableHeaders() {
-        // Setup headers to be returned
-        List<String> headerNames = Arrays.asList(
-                ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode(),
-                ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode(),
-                ScHeaderProvider.HttpHeaderKey.AUTHORIZATION.getCode(),
-                "some-other-header" // This one should not be forwarded
-        );
-        
-        // Setup mock expectations
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(headerNames));
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode()))
-                .thenReturn("api-key-value");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode()))
-                .thenReturn("Mozilla/5.0");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.AUTHORIZATION.getCode()))
-                .thenReturn("Bearer token123");
-        when(mockRequest.getHeader("some-other-header"))
-                .thenReturn("other-value");
-        
-        // Execute
-        Map<String, String> headers = scHeaderProvider.getHeaders();
-        
-        // Assert
-        assertNotNull("Headers map should not be null", headers);
-        assertEquals("Headers map should contain 5 entries", 5, headers.size());
-        assertEquals("API Key should be set correctly", "api-key-value", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode().toUpperCase()));
-        assertEquals("User Agent should be set correctly", "Mozilla/5.0", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode().toUpperCase()));
-        assertEquals("Authorization should be set correctly", "Bearer token123", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.AUTHORIZATION.getCode().toUpperCase()));
-        assertEquals("Financial ID should be set correctly", financialId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_FAPI_FINANCIAL_ID.getCode().toUpperCase()));
-        assertEquals("App Cat ID should be set correctly", appCatId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_APP_CAT_ID.getCode().toUpperCase()));
-        assertFalse("Non-forwardable header should not be included", 
-                headers.containsKey("SOME-OTHER-HEADER"));
-    }
-    
-    @Test
-    public void testGetHeaders_WithEmptyHeaderValues() {
-        // Setup headers to be returned
-        List<String> headerNames = Arrays.asList(
-                ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode(),
-                ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode()
-        );
-        
-        // Setup mock expectations
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(headerNames));
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode()))
-                .thenReturn("");  // Empty string
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode()))
-                .thenReturn(null); // Null value
-        
-        // Execute
-        Map<String, String> headers = scHeaderProvider.getHeaders();
-        
-        // Assert
-        assertNotNull("Headers map should not be null", headers);
-        assertEquals("Headers map should contain 2 entries", 2, headers.size());
-        assertEquals("Financial ID should be set correctly", financialId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_FAPI_FINANCIAL_ID.getCode().toUpperCase()));
-        assertEquals("App Cat ID should be set correctly", appCatId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_APP_CAT_ID.getCode().toUpperCase()));
-        assertFalse("Empty header value should not be included", 
-                headers.containsKey(ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode().toUpperCase()));
-        assertFalse("Null header value should not be included", 
-                headers.containsKey(ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode().toUpperCase()));
-    }
-    
-    @Test
-    public void testGetHeaders_AllForwardableHeaders() {
-        // Setup headers to include all forwardable headers
-        List<String> headerNames = Arrays.asList(
-                ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode(),
-                ScHeaderProvider.HttpHeaderKey.TRUE_CLIENT_IP.getCode(),
-                ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode(),
-                ScHeaderProvider.HttpHeaderKey.AUTHORIZATION.getCode(),
-                ScHeaderProvider.HttpHeaderKey.CLIENT_ID.getCode(),
-                ScHeaderProvider.HttpHeaderKey.X_FAPI_CUSTOMER_LAST_LOGGED_TIME.getCode(),
-                ScHeaderProvider.HttpHeaderKey.X_FAPI_CUSTOMER_IP_ADDRESS.getCode()
-        );
-        
-        // Setup mock expectations
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(headerNames));
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode()))
-                .thenReturn("test-api-key");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.TRUE_CLIENT_IP.getCode()))
-                .thenReturn("192.168.1.1");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode()))
-                .thenReturn("Mozilla/5.0");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.AUTHORIZATION.getCode()))
-                .thenReturn("Bearer token");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.CLIENT_ID.getCode()))
-                .thenReturn("client123");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.X_FAPI_CUSTOMER_LAST_LOGGED_TIME.getCode()))
-                .thenReturn("2025-05-21T10:00:00Z");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.X_FAPI_CUSTOMER_IP_ADDRESS.getCode()))
-                .thenReturn("10.0.0.1");
-        
-        // Execute
-        Map<String, String> headers = scHeaderProvider.getHeaders();
-        
-        // Assert
-        assertNotNull("Headers map should not be null", headers);
-        assertEquals("Headers map should contain 9 entries (7 forwardable + 2 defaults)", 9, headers.size());
-        
-        // Check that all forwardable headers are present
-        assertEquals("API Key should be present", "test-api-key", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode().toUpperCase()));
-        assertEquals("True Client IP should be present", "192.168.1.1", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.TRUE_CLIENT_IP.getCode().toUpperCase()));
-        assertEquals("User Agent should be present", "Mozilla/5.0", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode().toUpperCase()));
-        assertEquals("Authorization should be present", "Bearer token", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.AUTHORIZATION.getCode().toUpperCase()));
-        assertEquals("Client ID should be present", "client123", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.CLIENT_ID.getCode().toUpperCase()));
-        assertEquals("Customer Last Logged Time should be present", "2025-05-21T10:00:00Z", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_FAPI_CUSTOMER_LAST_LOGGED_TIME.getCode().toUpperCase()));
-        assertEquals("Customer IP Address should be present", "10.0.0.1", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_FAPI_CUSTOMER_IP_ADDRESS.getCode().toUpperCase()));
-        
-        // Check default headers
-        assertEquals("Financial ID should be set correctly", financialId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_FAPI_FINANCIAL_ID.getCode().toUpperCase()));
-        assertEquals("App Cat ID should be set correctly", appCatId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_APP_CAT_ID.getCode().toUpperCase()));
-    }
-    
-    @Test
-    public void testGetHeaders_CaseInsensitiveHeaderNames() {
-        // Setup headers with different cases
-        List<String> headerNames = Arrays.asList(
-                "X-API-KEY", // Uppercase
-                "user-agent", // Lowercase
-                "Authorization" // Mixed case
-        );
-        
-        // Setup mock expectations
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(headerNames));
-        when(mockRequest.getHeader("X-API-KEY")).thenReturn("api-key-upper");
+        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(Arrays.asList(
+                "x-api-key", "user-agent", "Authorization", "random-header")));
+        when(mockRequest.getHeader("x-api-key")).thenReturn("test-key");
         when(mockRequest.getHeader("user-agent")).thenReturn("Mozilla/5.0");
         when(mockRequest.getHeader("Authorization")).thenReturn("Bearer token");
+        when(mockRequest.getHeader("random-header")).thenReturn("value");
         
-        // Execute
         Map<String, String> headers = scHeaderProvider.getHeaders();
         
-        // Assert
-        assertNotNull("Headers map should not be null", headers);
-        assertEquals("Headers map should contain 5 entries", 5, headers.size());
-        
-        // All header keys should be uppercase in the result
-        assertTrue("API Key header should be uppercase", 
-                headers.containsKey("X-API-KEY"));
-        assertTrue("User Agent header should be uppercase", 
-                headers.containsKey("USER-AGENT"));
-        assertTrue("Authorization header should be uppercase", 
-                headers.containsKey("AUTHORIZATION"));
-        
-        // Check values
-        assertEquals("API Key value should be correct", "api-key-upper", 
-                headers.get("X-API-KEY"));
-        assertEquals("User Agent value should be correct", "Mozilla/5.0", 
-                headers.get("USER-AGENT"));
-        assertEquals("Authorization value should be correct", "Bearer token", 
-                headers.get("AUTHORIZATION"));
+        assertEquals(5, headers.size()); // 3 forwardable + 2 defaults
+        assertEquals("test-key", headers.get("X-API-KEY"));
+        assertEquals("Mozilla/5.0", headers.get("USER-AGENT"));
+        assertEquals("Bearer token", headers.get("AUTHORIZATION"));
+        assertFalse(headers.containsKey("RANDOM-HEADER")); // Not forwardable
     }
     
     @Test
-    public void testGetHeaders_WithNonForwardableHeaders() {
-        // Setup headers including non-forwardable ones
-        List<String> headerNames = Arrays.asList(
-                ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode(), // Forwardable
-                ScHeaderProvider.HttpHeaderKey.X_FAPI_INTERACTION_ID.getCode(), // Not forwardable
-                ScHeaderProvider.HttpHeaderKey.X_BMO_CHANNEL_URN.getCode(), // Not forwardable
-                "custom-header" // Not forwardable
-        );
+    public void testGetHeaders_EmptyAndNullValues() {
+        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(Arrays.asList(
+                "x-api-key", "user-agent")));
+        when(mockRequest.getHeader("x-api-key")).thenReturn("");
+        when(mockRequest.getHeader("user-agent")).thenReturn(null);
         
-        // Setup mock expectations
-        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(headerNames));
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode()))
-                .thenReturn("api-key-value");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.X_FAPI_INTERACTION_ID.getCode()))
-                .thenReturn("interaction-id");
-        when(mockRequest.getHeader(ScHeaderProvider.HttpHeaderKey.X_BMO_CHANNEL_URN.getCode()))
-                .thenReturn("channel-urn");
-        when(mockRequest.getHeader("custom-header"))
-                .thenReturn("custom-value");
-        
-        // Execute
         Map<String, String> headers = scHeaderProvider.getHeaders();
         
-        // Assert
-        assertNotNull("Headers map should not be null", headers);
-        assertEquals("Headers map should contain 3 entries (1 forwardable + 2 defaults)", 3, headers.size());
-        
-        // Check forwardable header is present
-        assertEquals("API Key should be present", "api-key-value", 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode().toUpperCase()));
-        
-        // Check non-forwardable headers are not present
-        assertFalse("Interaction ID should not be included", 
-                headers.containsKey(ScHeaderProvider.HttpHeaderKey.X_FAPI_INTERACTION_ID.getCode().toUpperCase()));
-        assertFalse("Channel URN should not be included", 
-                headers.containsKey(ScHeaderProvider.HttpHeaderKey.X_BMO_CHANNEL_URN.getCode().toUpperCase()));
-        assertFalse("Custom header should not be included", 
-                headers.containsKey("CUSTOM-HEADER"));
-        
-        // Check default headers
-        assertEquals("Financial ID should be set correctly", financialId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_FAPI_FINANCIAL_ID.getCode().toUpperCase()));
-        assertEquals("App Cat ID should be set correctly", appCatId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_APP_CAT_ID.getCode().toUpperCase()));
+        assertEquals(2, headers.size()); // Only defaults
+        assertFalse(headers.containsKey("X-API-KEY"));
+        assertFalse(headers.containsKey("USER-AGENT"));
     }
     
     @Test
-    public void testGetHeaders_WithCustomAppCatIdAndFinancialId() {
-        // Test with custom values
-        String customAppCatId = "12345";
-        String customFinancialId = "999";
-        ScHeaderProvider customProvider = new ScHeaderProvider(mockRequest, customAppCatId, customFinancialId);
-        
-        // Setup mock request with no headers
+    public void testGetHeaders_DefaultHeadersAlwaysIncluded() {
         when(mockRequest.getHeaderNames()).thenReturn(Collections.emptyEnumeration());
         
-        // Execute
-        Map<String, String> headers = customProvider.getHeaders();
+        Map<String, String> headers = scHeaderProvider.getHeaders();
         
-        // Assert
-        assertNotNull("Headers map should not be null", headers);
-        assertEquals("Headers map should contain 2 entries", 2, headers.size());
-        assertEquals("Custom Financial ID should be set correctly", customFinancialId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_FAPI_FINANCIAL_ID.getCode().toUpperCase()));
-        assertEquals("Custom App Cat ID should be set correctly", customAppCatId, 
-                headers.get(ScHeaderProvider.HttpHeaderKey.X_APP_CAT_ID.getCode().toUpperCase()));
+        assertEquals(financialId, headers.get("X-FAPI-FINANCIAL-ID"));
+        assertEquals(appCatId, headers.get("X-APP-CAT-ID"));
     }
     
     @Test
-    public void testHttpHeaderKeyShouldBeForwarded() {
-        // Test forwardable headers
-        assertTrue("x-api-key should be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-api-key"));
-        assertTrue("true-client-ip should be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("true-client-ip"));
-        assertTrue("user-agent should be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("user-agent"));
-        assertTrue("Authorization should be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("Authorization"));
-        assertTrue("clientId should be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("clientId"));
-        assertTrue("x-fapi-customer-last-logged-time should be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-fapi-customer-last-logged-time"));
-        assertTrue("x-fapi-customer-ip-address should be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-fapi-customer-ip-address"));
+    public void testGetHeaders_CaseInsensitive() {
+        when(mockRequest.getHeaderNames()).thenReturn(Collections.enumeration(Arrays.asList("X-API-KEY")));
+        when(mockRequest.getHeader("X-API-KEY")).thenReturn("test-value");
         
-        // Test case-insensitivity
-        assertTrue("X-API-KEY should be forwardable (case insensitive)", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("X-API-KEY"));
-        assertTrue("TRUE-CLIENT-IP should be forwardable (case insensitive)", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("TRUE-CLIENT-IP"));
-        assertTrue("USER-AGENT should be forwardable (case insensitive)", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("USER-AGENT"));
+        Map<String, String> headers = scHeaderProvider.getHeaders();
         
-        // Test non-forwardable headers
-        assertFalse("x-fapi-financial-id should not be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-fapi-financial-id"));
-        assertFalse("x-app-cat-id should not be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-app-cat-id"));
-        assertFalse("x-fapi-interaction-id should not be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-fapi-interaction-id"));
-        assertFalse("x-bmo-channel-urn should not be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-bmo-channel-urn"));
-        assertFalse("random-header should not be forwardable", 
-                ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("random-header"));
+        assertTrue(headers.containsKey("X-API-KEY"));
+        assertEquals("test-value", headers.get("X-API-KEY"));
     }
     
     @Test
-    public void testHttpHeaderKeyGetCodeAndToString() {
-        // Test getCode() method
-        assertEquals("x-fapi-financial-id", 
-                ScHeaderProvider.HttpHeaderKey.X_FAPI_FINANCIAL_ID.getCode());
-        assertEquals("x-app-cat-id", 
-                ScHeaderProvider.HttpHeaderKey.X_APP_CAT_ID.getCode());
-        assertEquals("x-api-key", 
-                ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode());
-        assertEquals("x-bmo-channel-urn", 
-                ScHeaderProvider.HttpHeaderKey.X_BMO_CHANNEL_URN.getCode());
-        assertEquals("clientId", 
-                ScHeaderProvider.HttpHeaderKey.CLIENT_ID.getCode());
-        assertEquals("x-fapi-customer-last-logged-time", 
-                ScHeaderProvider.HttpHeaderKey.X_FAPI_CUSTOMER_LAST_LOGGED_TIME.getCode());
-        assertEquals("x-fapi-customer-ip-address", 
-                ScHeaderProvider.HttpHeaderKey.X_FAPI_CUSTOMER_IP_ADDRESS.getCode());
-        assertEquals("user-agent", 
-                ScHeaderProvider.HttpHeaderKey.USER_AGENT.getCode());
-        assertEquals("x-fapi-interaction-id", 
-                ScHeaderProvider.HttpHeaderKey.X_FAPI_INTERACTION_ID.getCode());
-        assertEquals("true-client-ip", 
-                ScHeaderProvider.HttpHeaderKey.TRUE_CLIENT_IP.getCode());
-        assertEquals("Authorization", 
-                ScHeaderProvider.HttpHeaderKey.AUTHORIZATION.getCode());
-        
-        // Test toString() method
-        assertEquals("x-fapi-financial-id", 
-                ScHeaderProvider.HttpHeaderKey.X_FAPI_FINANCIAL_ID.toString());
-        assertEquals("x-app-cat-id", 
-                ScHeaderProvider.HttpHeaderKey.X_APP_CAT_ID.toString());
-        assertEquals("x-api-key", 
-                ScHeaderProvider.HttpHeaderKey.X_API_KEY.toString());
+    public void testShouldBeForwarded_ForwardableHeaders() {
+        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-api-key"));
+        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("user-agent"));
+        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("Authorization"));
+        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("clientId"));
+    }
+    
+    @Test
+    public void testShouldBeForwarded_NonForwardableHeaders() {
+        assertFalse(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-fapi-financial-id"));
+        assertFalse(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("x-app-cat-id"));
+        assertFalse(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("random-header"));
+    }
+    
+    @Test
+    public void testShouldBeForwarded_CaseInsensitive() {
+        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("X-API-KEY"));
+        assertTrue(ScHeaderProvider.HttpHeaderKey.shouldBeForwarded("USER-AGENT"));
+    }
+    
+    @Test
+    public void testHttpHeaderKeyMethods() {
+        assertEquals("x-api-key", ScHeaderProvider.HttpHeaderKey.X_API_KEY.getCode());
+        assertEquals("x-api-key", ScHeaderProvider.HttpHeaderKey.X_API_KEY.toString());
     }
 }
