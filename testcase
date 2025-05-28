@@ -184,6 +184,428 @@ const getIssuedDeviceDetails = async (requestParams, correlationId, requestId) =
     });
 };
 
+--------------------------------------------------------
+# Sample Data Flow - Existing Consent Logic
+
+## **Input: JWT Token Sample**
+
+```json
+{
+  "oid": "12345678901234567890",
+  "client_id": "mobile-banking-app-v2",
+  "iss": "https://auth.bmo.com",
+  "aud": "customer-info-api",
+  "exp": 1705123456,
+  "iat": 1705119856
+}
+```
+
+**Extracted Values:**
+- `ecifId = "12345678901234567890"`
+- `clientId = "mobile-banking-app-v2"`
+
+---
+
+## **STEP 1: Get Retail Consent Details**
+
+### **Request to `retailConsentService.getRetailConsentDetails()`:**
+```json
+{
+  "consentHistoryFilter": "ACTIVE",
+  "userId": "12345678901234567890",
+  "clientId": "mobile-banking-app-v2"
+}
+```
+
+### **Response Sample (SUCCESS CASE):**
+```json
+{
+  "permissions": [
+    {
+      "permissionId": "consent-abc123-def456",
+      "permissionLastUpdateDate": "2024-01-15T10:30:00Z",
+      "permissionStatus": "ACTIVE",
+      "accountList": [
+        {
+          "accountId": "acc-12345",
+          "accountType": "CHECKING",
+          "permissions": ["READ", "BALANCE"]
+        },
+        {
+          "accountId": "acc-67890", 
+          "accountType": "SAVINGS",
+          "permissions": ["READ", "BALANCE", "TRANSACTIONS"]
+        }
+      ],
+      "permissionDefinitions": [
+        {
+          "permission": "Cust_Contact",
+          "description": "Access to customer contact information"
+        },
+        {
+          "permission": "Account_Basic", 
+          "description": "Basic account information access"
+        }
+      ],
+      "clientMetaData": {
+        "scope": "account_basic customer_contact account_transactions",
+        "clientName": "Mobile Banking App",
+        "registrationDate": "2024-01-01T00:00:00Z"
+      }
+    }
+  ]
+}
+```
+
+### **Response Sample (NO PERMISSIONS CASE):**
+```json
+{
+  "permissions": []
+}
+```
+
+---
+
+## **STEP 2: Check for Permissions**
+
+### **Code Check:**
+```javascript
+if (!retailConsentResponse.permissions?.[0]) {
+    return CUSTOMER_NOT_AUTHORIZED; // FAIL - No permissions exist
+}
+```
+
+**Success**: `permissions[0]` exists  
+**Failure**: Empty `permissions` array → Customer gets `CUSTOMER_NOT_AUTHORIZED`
+
+---
+
+## **STEP 3: `hasActiveConsentAndScopeMatched()` Function**
+
+This function makes **two separate checks**:
+
+### **3.1: `hasActiveConsent(accountList)`**
+
+**Input:** `accountList` from step 1 response
+```json
+[
+  {
+    "accountId": "acc-12345",
+    "accountType": "CHECKING", 
+    "permissions": ["READ", "BALANCE"]
+  },
+  {
+    "accountId": "acc-67890",
+    "accountType": "SAVINGS",
+    "permissions": ["READ", "BALANCE", "TRANSACTIONS"] 
+  }
+]
+```
+
+**Logic:** `accountList && accountList.length > 0`  
+**Result:** `true` (has 2 accounts)
+
+### **3.2: `isScopeMatched(retailConsent)`**
+
+**Input:** Full retail consent from step 1  
+**Target Pattern:** `"Cust_Contact"` (from `customerInfoConstants.CUSTOMER_CONSENT_SCOPE`)
+
+**Permission Definitions Check:**
+```json
+"permissionDefinitions": [
+  {
+    "permission": "Cust_Contact", ← MATCHES!
+    "description": "Access to customer contact information"
+  },
+  {
+    "permission": "Account_Basic",
+    "description": "Basic account information access" 
+  }
+]
+```
+
+**Logic:** Loop through `permissionDefinitions`, check if any `permission` matches `"Cust_Contact"`  
+**Result:** `true` (found "Cust_Contact" match)
+
+### **Combined Result:**
+`hasActiveConsent = true AND isScopeMatched = true` → **PASS**
+
+---
+
+## **STEP 4: DR (Data Recipient) Scope Matching**
+
+### **Function:** `isCustomerConsentedScopesAndDRRegisteredScopesMatched()`
+
+### **Input Data:**
+**Customer Consented Scopes** (from `permissionDefinitions`):
+```json
+[
+  {"permission": "Cust_Contact"},
+  {"permission": "Account_Basic"}
+]
+```
+
+**Client Registered Scopes** (from `clientMetaData.scope`):
+```json
+"scope": "account_basic customer_contact account_transactions"
+```
+Split into: `["account_basic", "customer_contact", "account_transactions"]`
+
+**FDX to ECIF Mapping** (from SSM):
+```json
+{
+  "fdxToEcif": {
+    "account_basic": "Account_Basic",
+    "customer_contact": "Cust_Contact", 
+    "account_transactions": "Account_Transactions"
+  }
+}
+```
+
+### **Matching Logic:**
+```
+Customer Scope 1: "Cust_Contact"
+  - Check against client scope "account_basic" → fdxToEcif["account_basic"] = "Account_Basic" → NO MATCH
+  - Check against client scope "customer_contact" → fdxToEcif["customer_contact"] = "Cust_Contact" → MATCH!
+  - Check against client scope "account_transactions" → fdxToEcif["account_transactions"] = "Account_Transactions" → NO MATCH
+
+Customer Scope 2: "Account_Basic"  
+  - Check against client scope "account_basic" → fdxToEcif["account_basic"] = "Account_Basic" → MATCH!
+  - Check against client scope "customer_contact" → fdxToEcif["customer_contact"] = "Cust_Contact" → NO MATCH
+  - Check against client scope "account_transactions" → fdxToEcif["account_transactions"] = "Account_Transactions" → NO MATCH
+```
+
+**Results:**
+- Customer consented scopes: 2
+- Matched scopes: 2  
+- **Match!** All customer scopes are covered by client registration
+
+---
+
+## **STEP 5A: SUCCESS CASE - Get Customer Profile**
+
+If all checks pass, call `retrievePartyViewService.getCustomerProfileDetails()`
+
+### **Sample Customer Profile Response:**
+```json
+{
+  "person": {
+    "personName": [
+      {
+        "nameUsageType": "1",
+        "givenNameOne": "John",
+        "givenNameTwo": "Michael", 
+        "lastName": "Smith"
+      }
+    ],
+    "partyAddress": [
+      {
+        "addressUsageType": "100000",
+        "address": {
+          "addressLineOne": "123 Main Street",
+          "addressLineTwo": "Apt 4B",
+          "city": "Toronto",
+          "provinceStateTypeValue": "ON",
+          "zipPostalCode": "M5V 3A8",
+          "countryTypeCode": "CA"
+        }
+      }
+    ],
+    "partyContactMethod": [
+      {
+        "contactMethodUsageType": "100008",
+        "contactMethod": {
+          "contactMethodType": "2",
+          "referenceNumber": "john.smith@email.com"
+        }
+      },
+      {
+        "contactMethodUsageType": "100000", 
+        "contactMethod": {
+          "contactMethodType": "1",
+          "phoneNumber": {
+            "phoneCountryCode": "1"
+          },
+          "referenceNumber": "416-555-0123"
+        }
+      }
+    ]
+  }
+}
+```
+
+### **Final Response to Customer:**
+```json
+{
+  "name": {
+    "first": "John",
+    "middle": "Michael",
+    "last": "Smith"
+  },
+  "addresses": [
+    {
+      "line1": "123 Main Street",
+      "line2": "Apt 4B", 
+      "line3": "",
+      "city": "Toronto",
+      "region": "ON",
+      "postalCode": "M5V 3A8",
+      "country": "CA",
+      "type": "HOME"
+    }
+  ],
+  "email": ["john.smith@email.com"],
+  "telephones": [
+    {
+      "country": "1",
+      "number": "+416-555-0123",
+      "type": "HOME"
+    }
+  ]
+}
+```
+
+---
+
+## **STEP 5B: FAILURE CASE - Scope Mismatch & Delete**
+
+### **Scenario:** Customer has different scopes than client expects
+
+**Customer Consented Scopes:**
+```json
+[{"permission": "Cust_Contact"}]
+```
+
+**Client Registered Scopes:**
+```json
+"scope": "account_basic account_transactions"
+```
+
+**Mapping Result:**
+- Customer has: `"Cust_Contact"`
+- Client needs: `"Account_Basic"` + `"Account_Transactions"`  
+- **Mismatch!** Customer scope doesn't cover what client registered for
+
+### **Delete Process Begins:**
+
+#### **5B.1: Find IV User**
+
+**Call to `retrievePartyIdentification.getCustomerIdentificationDetails()`:**
+```json
+{
+  "originatorData": {
+    "applicationCatalogueId": "3384",
+    "country": "CAN"
+  },
+  "outputIdType": "OCIF",
+  "identifier": {
+    "id": "12345678901234567890",
+    "type": "ECIF"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "identifier": {
+    "id": "OCIF98765432109876543210",
+    "type": "OCIF"
+  }
+}
+```
+
+#### **5B.2: Get Credential Service Users**
+
+**Call to `credentialService.getCustomerISAMCredentials()`:**
+```json
+["user123", "user456@ciam", "user789"]
+```
+
+#### **5B.3: Get User Grants**
+
+For each IV user, call `isamService.getUserGrant()`:
+
+**Sample Grant Response:**
+```json
+[
+  {
+    "id": "grant-xyz789",
+    "clientId": "mobile-banking-app-v2",
+    "scopes": ["account_basic", "customer_contact"],
+    "status": "ACTIVE"
+  },
+  {
+    "id": "grant-abc123", 
+    "clientId": "different-client",
+    "scopes": ["account_basic"],
+    "status": "ACTIVE"
+  }
+]
+```
+
+**Match Found:** `grant-xyz789` matches `clientId = "mobile-banking-app-v2"`  
+**Result:** `ivUser = "user456@ciam"`, `grantId = "grant-xyz789"`
+
+#### **5B.4: Delete Consent**
+
+**Delete Request Payload:**
+```json
+{
+  "originatorData": {
+    "applicationCatalogueId": "3384",
+    "country": "ca"
+  },
+  "userId": "12345678901234567890",
+  "iv-user": "user456@ciam",
+  "permissions": [
+    {
+      "permissionId": "consent-abc123-def456",
+      "permissionLastUpdateDate": "2024-01-15T10:30:00Z",
+      "clientId": "mobile-banking-app-v2",
+      "grantId": "grant-xyz789"
+    }
+  ]
+}
+```
+
+**Expected Response:** `HTTP 204 No Content` (successful deletion)
+
+**Final Result:** Customer gets `CUSTOMER_NOT_AUTHORIZED` error
+
+---
+
+## **SQS Event Sample**
+
+### **Success Case:**
+```json
+{
+  "customerId": "12345678901234567890",
+  "clientId": "mobile-banking-app-v2", 
+  "consentId": "consent-abc123-def456",
+  "logRecStatus": "ACTIVE",
+  "lastAccessedDate": "20240115",
+  "fapiInteractionID": "correlation-id-12345"
+}
+```
+
+### **With New Device API Fallback:**
+```json
+{
+  "customerId": "12345678901234567890",
+  "clientId": "mobile-banking-app-v2",
+  "authMethod": "device_credential",
+  "deviceUid": "57BD5EEB67D349B1838B2F5419B46446", 
+  "fallbackReason": "scope_mismatch_deleted",
+  "businessCategory": ["WEALTH-NESBITTBURNS"],
+  "logRecStatus": "ACTIVE",
+  "lastAccessedDate": "20240115",
+  "fapiInteractionID": "correlation-id-12345"
+}
+```
+
+This shows exactly how your current flow works with real data examples, and where the new device API would fit in as a fallback mechanism.
+
 module.exports = {
     getIssuedDeviceDetails
 };
