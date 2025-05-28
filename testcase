@@ -45,3 +45,145 @@ module.exports = {
         return requestPayload;
     }
 };
+
+
+
+
+
+
+
+
+
+
+
+
+-----------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// NEW FILE: /ida/issuedDeviceService.js
+// Simple service following your existing patterns
+
+const logger = require("../../common/logger/logger.js");
+const ciConstants = require("../helper/customerInfoConstants.js");
+const customerInfoErrorCodes = require("../helper/customerInfoErrorCodes.js");
+const requestMapper = require("./issuedDeviceRequestMapper.js");
+const responseMapper = require("../helper/customerInfoResponseMapper.js"); // Reuse existing
+const axios = require("axios");
+const crossAccountSSMParamHelper = require("../../common/util/aws/crossAccountSSMParamHelper.js");
+
+const LOG_PREFIX = "issuedDeviceService.js - ";
+const API_BASE_URL = process.env.ISSUED_DEVICE_ADMINISTRATION_BASE_URI || "https://api2-dev.bmogc.net";
+const API_END_POINT = "/api/issued-device-administration/alias/ecif/get";
+const APP_CAT_ID = process.env.APP_CAT_ID;
+const API_TIMEOUT = process.env.BACKEND_API_TIMEOUT;
+
+const getIssuedDeviceDetails = async (requestParams, correlationId, requestId) => {
+    logger.trace(
+        LOG_PREFIX.concat("In getIssuedDeviceDetails begins.. with requestId: ", requestId),
+        correlationId
+    );
+
+    return new Promise(async function (resolve, reject) {
+        const startTime = Date.now();
+        const apiURL = API_BASE_URL + API_END_POINT;
+
+        // For now, use same SSM pattern as other services - adjust role ARN as needed
+        let deviceSSMParams;
+        try {
+            deviceSSMParams = await crossAccountSSMParamHelper.getCrossAccountSSMParams(
+                ciConstants.CROSS_ACCOUNT_ROLE_ARN_CI_DEV2, // Adjust this as needed
+                ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_API_KEY,
+                ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_AWS_GW_ID,
+                correlationId
+            );
+        } catch (error) {
+            logger.error(
+                LOG_PREFIX.concat("Error retrieving SSM params for device API"),
+                error,
+                correlationId
+            );
+            const errorResponse = responseMapper.mapErrorResponse(
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode,
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+            return reject(errorResponse);
+        }
+
+        const SC_DEVICE_AWS_KEY = deviceSSMParams[ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_API_KEY];
+        const SC_DEVICE_AWS_GW_ID = deviceSSMParams[ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_AWS_GW_ID];
+
+        const payload = requestMapper.getIssuedDeviceRequest(requestParams.ecifId, correlationId);
+
+        logger.logBackendServiceRequest(
+            LOG_PREFIX.concat("Device API REST API"),
+            payload,
+            correlationId
+        );
+
+        const headers = {
+            "x-api-key": SC_DEVICE_AWS_KEY,
+            "x-apigw-api-id": SC_DEVICE_AWS_GW_ID,
+            "x-request-id": correlationId,
+            "x-fapi-interaction-id": correlationId,
+            "x-fapi-financial-id": ciConstants.X_FAPI_FINANCIAL_ID_BMO,
+            "x-app-cat-id": APP_CAT_ID,
+            "Content-Type": "application/json"
+        };
+
+        try {
+            const response = await axios.post(apiURL, payload, {
+                timeout: API_TIMEOUT,
+                headers: headers
+            });
+
+            logger.info(
+                LOG_PREFIX.concat("response.status: ", response.status),
+                correlationId
+            );
+
+            logger.logBackendServiceResponse(
+                LOG_PREFIX.concat("Device API REST API"),
+                startTime,
+                response.data,
+                correlationId
+            );
+
+            if (response.status === 200) {
+                return resolve(response.data);
+            } else {
+                return reject(response.data);
+            }
+
+        } catch (error) {
+            logger.error(
+                LOG_PREFIX.concat("Error calling device API"),
+                error,
+                correlationId
+            );
+
+            const errorResponse = responseMapper.mapErrorResponse(
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode,
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+            return reject(errorResponse);
+        }
+    });
+};
+
+module.exports = {
+    getIssuedDeviceDetails
+};
