@@ -609,3 +609,20 @@ This shows exactly how your current flow works with real data examples, and wher
 module.exports = {
     getIssuedDeviceDetails
 };
+
+----------------------------------
+We're aligned on proceeding with the merge; however, we need clarity on the following questions before moving forward.
+
+To ensure our ask is clearly understood, I had a call with Paritosh to validate the details with his subject matter expertise, and we both arrived at the same conclusion:
+
+Before performing the delete operation, the system requires both the ivUserId and grantId as inputs. Once these are available, the delete action proceeds.
+
+With the new API, we intend to call it using the ecifID. In this context:
+
+Does the uid returned in the new API response represent the same value as the previously used ivUserId?
+
+Does the new API also provide the associated grant information? If so, what is the mapping between the response and the grantId?
+
+In the existing implementation, a separate API is called to retrieve the grant information. We're trying to determine whether that step is still required or if the new API now consolidates both pieces of information.
+
+Let me know if you'd like this adapted into an email format or shortened for a chat message.
