@@ -1,87 +1,47 @@
- Camunda BPM in Insurance:
+// issuedDeviceRequestMapper.js - Request mapper for Issued Device Administration API
 
-Claims Processing Automation
+const logger = require("../../common/logger/logger.js");
+const customerInfoConstants = require("../helper/customerInfoConstants.js");
 
+const APP_CAT_ID = process.env.APP_CAT_ID;
+const LOG_PREFIX = "issuedDeviceRequestMapper.js - ";
 
-Use AI to automatically:
+module.exports = {
+    /**
+     * Builds the request object for making the call to Issued Device Administration API.
+     * @param {string} ecifId
+     * @param {string} correlationId
+     * @returns {object} request payload
+     */
+    getIssuedDeviceRequest: (ecifId, correlationId) => {
+        logger.trace("In getIssuedDeviceRequest.....", correlationId);
 
-Classify and categorize incoming claims
-Extract key information from claim documents
-Assess initial claim validity
-Route claims to appropriate processing paths
-Predict potential fraud risks
+        const requestPayload = {
+            ecifID: ecifId,
+            expandList: customerInfoConstants.IDA_EXPAND_LIST || "all",
+            scope: customerInfoConstants.IDA_SCOPE || "default",
+            businessCategory: [
+                customerInfoConstants.IDA_BUSINESS_CATEGORY || "WEALTH"
+            ],
+            originatorData: {
+                applicationCatalogueID: customerInfoConstants.APP_CAT_ID,
+                country: customerInfoConstants.COUNTRY_CANADA,
+                locationID: "192.168.0.0", // Static as per existing pattern
+                locationType: "IP",
+                channel: "web", 
+                employeeUserID: "customerInfoService", // Service identifier
+                employeeUserName: "customerInfoService",
+                transitNumber: "000" // Default value
+            }
+        };
 
+        logger.debugWithSanitize(
+            requestPayload,
+            LOG_PREFIX.concat("getIssuedDeviceRequest.requestPayload"),
+            correlationId
+        );
 
-
-
-Underwriting Enhancement
-
-
-AI-powered risk assessment
-
-Analyze complex risk factors
-Generate more accurate pricing models
-Automate initial underwriting decisions
-Provide real-time risk scoring
-Recommend personalized insurance products
-
-
-
-
-Customer Service Optimization
-
-
-AI-driven chatbots integrated with Camunda workflows
-
-Handle initial customer inquiries
-Guide customers through policy applications
-Provide personalized policy recommendations
-Automate first-level support processes
-
-
-
-
-Predictive Maintenance for Commercial Insurance
-
-
-Use machine learning to:
-
-Predict potential equipment failures
-Assess risk in industrial/commercial policies
-Recommend preventive maintenance strategies
-Dynamically adjust insurance coverage
-
-
-
-
-Fraud Detection
-
-
-AI algorithms to:
-
-Identify suspicious claim patterns
-Flag potentially fraudulent applications
-Trigger detailed investigation workflows
-Continuously learn and improve fraud detection
-
-
-
-
-Document Processing
-
-
-AI-powered document intelligence
-
-Automated document classification
-Intelligent data extraction
-Validate document completeness
-Reduce manual data entry errors
-
-
-
-Technical Integration Approaches:
-
-Use AI microservices alongside Camunda
-Implement AI models as external service tasks
-Leverage machine learning APIs
-Create custom AI connectors for Camunda
+        logger.trace("Out getIssuedDeviceRequest.....", correlationId);
+        return requestPayload;
+    }
+};
