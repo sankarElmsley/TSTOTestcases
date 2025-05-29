@@ -756,9 +756,6 @@ module.exports = {
 
 
 
-
-
-
 import logger from '../common/logger/logger';
 import { mapResponse, mapErrorResponse } from './helper/customerInfoResponseMapper';
 import retrievePartyViewService from './rpv/retrievePartyViewService';
@@ -785,6 +782,12 @@ function hasActiveConsentAndScopeMatched(retailConsent: any, correlationId: stri
 
 /**
  * Enhanced function to delete multiple consents
+ * Loops through all IV users and deletes their consents individually
+ * @param {Array} allIVUsersWithGrants - Array of IV users with their grant information
+ * @param {Object} requestParams - Original request parameters
+ * @param {Object} retailConsent - Consent details including permissionId
+ * @param {string} correlationId - Correlation ID for logging
+ * @param {string} requestId - Request ID for logging
  */
 const deleteMultipleConsents = async (
     allIVUsersWithGrants: any[],
@@ -876,6 +879,22 @@ const deleteMultipleConsents = async (
             correlationId
         );
     }
+
+    // Log detailed results for troubleshooting
+    deletionResults.forEach((result, index) => {
+        if (result.success) {
+            logger.debug(
+                `${LOG_PREFIX}Deletion [${index + 1}] SUCCESS: ${result.ivUser} (${result.source})`,
+                correlationId
+            );
+        } else {
+            logger.error(
+                `${LOG_PREFIX}Deletion [${index + 1}] FAILED: ${result.ivUser} (${result.source})`,
+                result.error,
+                correlationId
+            );
+        }
+    });
 };
 
 export const getCustomerInfo = async (event: any, correlationId: string, args: any) => {
@@ -960,7 +979,7 @@ export const getCustomerInfo = async (event: any, correlationId: string, args: a
             logger.info(`${LOG_PREFIX}Scopes don't match, initiating enhanced consent deletion process`, correlationId);
 
             try {
-                // Use the enhanced method to find all IV users with grants
+                // ENHANCED APPROACH: Use the enhanced method to find all IV users with grants
                 const allIVUsersWithGrants = await customerConsentDeleteUtil.findAllIVUsersWithGrants(
                     args, 
                     requestParams, 
@@ -992,7 +1011,7 @@ export const getCustomerInfo = async (event: any, correlationId: string, args: a
                     correlationId
                 );
                 
-                // Continue with the original single deletion approach as fallback
+                // FALLBACK APPROACH: Continue with the original single deletion approach as fallback
                 logger.info(`${LOG_PREFIX}Falling back to original single consent deletion`, correlationId);
                 
                 try {
