@@ -748,3 +748,354 @@ module.exports = {
     ISDS_GET_DEVICE_DETAILS_END_POINT: "/api/issued-device-administration/alias/ecif/get"
   }
 };
+
+
+
+
+----------------------------------------------------------------------------------------------------------
+const logger = require("././common/logger/logger.js");
+const ERRORCODES = require("./customerInfErrorCodes.js");
+const LOG_PREFIX = "customerConsentDeleteUtil.js - ";
+const retrievePartyIdentification = require("../rpi/retrievePartyIdentificationService.js");
+const credentialService = require("../cs/credentialService.js");
+const isamService = require("../isam/isamCustomerGrantsService.js");
+const issuedDeviceService = require("../ida/issuedDeviceService.js"); // New ISDS service
+const responseMapper = require("../helper/customerInfoResponseMapper.js");
+
+/**
+ * Original method to find IV User from credential service
+ */
+const findIVUser = async (args, requestParams, clientId, correlationId, requestId) => {
+    return new Promise(async function (resolve, reject) {
+        try {
+            const ocifid = await retrievePartyIdentification.getCustomerIdentificationDetails(
+                requestParams,
+                correlationId,
+                requestId
+            );
+
+            logger.info(
+                LOG_PREFIX.concat("Retrieved the OCIF-ID from the RPI API: ", ocifid),
+                correlationId
+            );
+
+            const ivUsers = await credentialService.getCustomerISAMCredentials(
+                args,
+                ocifid,
+                correlationId,
+                requestId
+            );
+
+            logger.info(
+                LOG_PREFIX.concat(ivUsers.length, " ivUser(s) retrieved from the CredentialService."),
+                correlationId
+            );
+
+            for (let ivUser of ivUsers) {
+                if (!ivUser?.includes("@ciam")) {
+                    ivUser = ivUser + "@ciam";
+                }
+
+                const grants = await isamService.getUserGrant(
+                    args,
+                    ivUser,
+                    correlationId,
+                    requestId
+                );
+
+                for (const grant of grants) {
+                    if (grant.clientId === clientId) {
+                        return resolve([ivUser, grant.id]);
+                    }
+                }
+            }
+
+            logger.error(
+                LOG_PREFIX.concat(
+                    ERRORCODES.INVALID_RESP_CS_API.code,
+                    " ",
+                    ERRORCODES.INVALID_RESP_CS_API.message,
+                    " Not able to identify the matched iv-user"
+                ),
+                correlationId
+            );
+
+            const errorResponse = responseMapper.mapErrorResponse(
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+
+            return reject(errorResponse);
+
+        } catch (err) {
+            logger.error(
+                LOG_PREFIX.concat(
+                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
+                    " ",
+                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.message
+                ),
+                err,
+                correlationId
+            );
+
+            const errorResponse = responseMapper.mapErrorResponse(
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+
+            return reject(errorResponse);
+        }
+    });
+};
+
+/**
+ * New method to find IV User from ISDS API
+ */
+const findIVUserFromISDS = async (args, requestParams, clientId, correlationId, requestId) => {
+    return new Promise(async function (resolve, reject) {
+        try {
+            logger.info(
+                LOG_PREFIX.concat("Calling ISDS API to get device details for ecifId: ", requestParams.ecifId),
+                correlationId
+            );
+
+            // Call ISDS API to get device details
+            const isdsResponse = await issuedDeviceService.getIssuedDeviceDetails(
+                requestParams,
+                correlationId,
+                requestId
+            );
+
+            logger.infoWithSanitize(
+                isdsResponse,
+                LOG_PREFIX.concat("ISDS API response received: "),
+                correlationId
+            );
+
+            // Extract UID from ISDS response
+            const uid = isdsResponse?.credentialIdentityInfo?.uid;
+            if (!uid) {
+                logger.error(
+                    LOG_PREFIX.concat("No UID found in ISDS response"),
+                    correlationId
+                );
+                const errorResponse = responseMapper.mapErrorResponse(
+                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
+                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                    correlationId
+                );
+                return reject(errorResponse);
+            }
+
+            logger.info(
+                LOG_PREFIX.concat("Retrieved UID from ISDS API: ", uid),
+                correlationId
+            );
+
+            // Convert UID to ivUser format
+            let ivUser = uid;
+            if (!ivUser.includes("@ciam")) {
+                ivUser = ivUser + "@ciam";
+            }
+
+            logger.info(
+                LOG_PREFIX.concat("Formatted ivUser: ", ivUser),
+                correlationId
+            );
+
+            // Get grants for this ivUser
+            const grants = await isamService.getUserGrant(
+                args,
+                ivUser,
+                correlationId,
+                requestId
+            );
+
+            logger.info(
+                LOG_PREFIX.concat("Retrieved ", grants.length, " grant(s) for ivUser: ", ivUser),
+                correlationId
+            );
+
+            // Find matching grant for the clientId
+            for (const grant of grants) {
+                if (grant.clientId === clientId) {
+                    logger.info(
+                        LOG_PREFIX.concat("Found matching grant for clientId: ", clientId, ", grantId: ", grant.id),
+                        correlationId
+                    );
+                    return resolve([ivUser, grant.id]);
+                }
+            }
+
+            logger.error(
+                LOG_PREFIX.concat("No matching grant found for clientId: ", clientId),
+                correlationId
+            );
+
+            const errorResponse = responseMapper.mapErrorResponse(
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+
+            return reject(errorResponse);
+
+        } catch (err) {
+            logger.error(
+                LOG_PREFIX.concat("Error in findIVUserFromISDS: "),
+                err,
+                correlationId
+            );
+
+            const errorResponse = responseMapper.mapErrorResponse(
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+
+            return reject(errorResponse);
+        }
+    });
+};
+
+/**
+ * Enhanced method that combines both approaches and returns all iv-users with grants
+ */
+const findAllIVUsersWithGrants = async (args, requestParams, clientId, correlationId, requestId) => {
+    return new Promise(async function (resolve, reject) {
+        try {
+            logger.info(
+                LOG_PREFIX.concat("Starting combined search for IV users with clientId: ", clientId),
+                correlationId
+            );
+
+            const allIVUsersWithGrants = [];
+
+            // Method 1: Get IV users from credential service (original approach)
+            try {
+                logger.info(
+                    LOG_PREFIX.concat("Attempting to find IV users via Credential Service"),
+                    correlationId
+                );
+
+                const [credentialIVUser, credentialGrantId] = await findIVUser(
+                    args, 
+                    requestParams, 
+                    clientId, 
+                    correlationId, 
+                    requestId
+                );
+
+                allIVUsersWithGrants.push({
+                    source: 'CredentialService',
+                    ivUser: credentialIVUser,
+                    grantId: credentialGrantId
+                });
+
+                logger.info(
+                    LOG_PREFIX.concat("Found IV user from Credential Service: ", credentialIVUser),
+                    correlationId
+                );
+
+            } catch (credentialError) {
+                logger.warn(
+                    LOG_PREFIX.concat("Failed to get IV user from Credential Service: "),
+                    credentialError,
+                    correlationId
+                );
+            }
+
+            // Method 2: Get IV users from ISDS API (new approach)
+            try {
+                logger.info(
+                    LOG_PREFIX.concat("Attempting to find IV users via ISDS API"),
+                    correlationId
+                );
+
+                const [isdsIVUser, isdsGrantId] = await findIVUserFromISDS(
+                    args, 
+                    requestParams, 
+                    clientId, 
+                    correlationId, 
+                    requestId
+                );
+
+                // Check if this is a duplicate
+                const isDuplicate = allIVUsersWithGrants.some(item => 
+                    item.ivUser === isdsIVUser && item.grantId === isdsGrantId
+                );
+
+                if (!isDuplicate) {
+                    allIVUsersWithGrants.push({
+                        source: 'ISDS',
+                        ivUser: isdsIVUser,
+                        grantId: isdsGrantId
+                    });
+
+                    logger.info(
+                        LOG_PREFIX.concat("Found IV user from ISDS: ", isdsIVUser),
+                        correlationId
+                    );
+                } else {
+                    logger.info(
+                        LOG_PREFIX.concat("ISDS IV user is duplicate, skipping: ", isdsIVUser),
+                        correlationId
+                    );
+                }
+
+            } catch (isdsError) {
+                logger.warn(
+                    LOG_PREFIX.concat("Failed to get IV user from ISDS: "),
+                    isdsError,
+                    correlationId
+                );
+            }
+
+            // Check if we found any IV users
+            if (allIVUsersWithGrants.length === 0) {
+                logger.error(
+                    LOG_PREFIX.concat("No IV users found through any method for clientId: ", clientId),
+                    correlationId
+                );
+
+                const errorResponse = responseMapper.mapErrorResponse(
+                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
+                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                    correlationId
+                );
+
+                return reject(errorResponse);
+            }
+
+            logger.info(
+                LOG_PREFIX.concat("Total IV users found: ", allIVUsersWithGrants.length),
+                correlationId
+            );
+
+            return resolve(allIVUsersWithGrants);
+
+        } catch (err) {
+            logger.error(
+                LOG_PREFIX.concat("Error in findAllIVUsersWithGrants: "),
+                err,
+                correlationId
+            );
+
+            const errorResponse = responseMapper.mapErrorResponse(
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
+                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+
+            return reject(errorResponse);
+        }
+    });
+};
+
+module.exports = { 
+    findIVUser, 
+    findIVUserFromISDS, 
+    findAllIVUsersWithGrants 
+};
