@@ -611,18 +611,115 @@ module.exports = {
 };
 
 ----------------------------------
-We're aligned on proceeding with the merge; however, we need clarity on the following questions before moving forward.
+const logger = require("../../common/logger/logger.js");
+const ciConstants = require("../helper/customerInfoConstants.js");
+const customerInfoErrorCodes = require("../helper/customerInfoErrorCodes.js");
+const requestMapper = require("./issuedDeviceRequestMapper.js");
+const responseMapper = require("../helper/customerInfoResponseMapper.js");
+const axios = require("axios");
+const crossAccountSSMParamHelper = require("../../common/util/aws/crossAccountSSMParamHelper.js");
 
-To ensure our ask is clearly understood, I had a call with Paritosh to validate the details with his subject matter expertise, and we both arrived at the same conclusion:
+const LOG_PREFIX = "issuedDeviceService.js - ";
+const API_BASE_URL = process.env.ISSUED_DEVICE_ADMINISTRATION_BASE_URI || "https://api2-dev.bmogc.net";
+const API_END_POINT = "/api/issued-device-administration/alias/ecif/get";
+const APP_CAT_ID = process.env.APP_CAT_ID;
+const API_TIMEOUT = process.env.BACKEND_API_TIMEOUT;
 
-Before performing the delete operation, the system requires both the ivUserId and grantId as inputs. Once these are available, the delete action proceeds.
+const getIssuedDeviceDetails = async (requestParams, correlationId, requestId) => {
+    logger.trace(
+        LOG_PREFIX.concat("In getIssuedDeviceDetails begins.. with requestId: ", requestId),
+        correlationId
+    );
 
-With the new API, we intend to call it using the ecifID. In this context:
+    return new Promise(async function (resolve, reject) {
+        const startTime = Date.now();
+        const apiURL = API_BASE_URL + API_END_POINT;
 
-Does the uid returned in the new API response represent the same value as the previously used ivUserId?
+        // Get SSM parameters for ISDS API
+        let deviceSSMParams;
+        try {
+            deviceSSMParams = await crossAccountSSMParamHelper.getCrossAccountSSMParams(
+                ciConstants.CROSS_ACCOUNT_ROLE_ARN_CI_DEV2,
+                ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_API_KEY,
+                ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_AWS_GW_ID,
+                correlationId
+            );
+        } catch (error) {
+            logger.error(
+                LOG_PREFIX.concat("Error retrieving SSM params for ISDS API"),
+                error,
+                correlationId
+            );
+            const errorResponse = responseMapper.mapErrorResponse(
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode,
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+            return reject(errorResponse);
+        }
 
-Does the new API also provide the associated grant information? If so, what is the mapping between the response and the grantId?
+        const SC_DEVICE_AWS_KEY = deviceSSMParams[ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_API_KEY];
+        const SC_DEVICE_AWS_GW_ID = deviceSSMParams[ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_AWS_GW_ID];
 
-In the existing implementation, a separate API is called to retrieve the grant information. We're trying to determine whether that step is still required or if the new API now consolidates both pieces of information.
+        const payload = requestMapper.getIssuedDeviceRequest(requestParams.ecifId, correlationId);
 
-Let me know if you'd like this adapted into an email format or shortened for a chat message.
+        logger.logBackendServiceRequest(
+            LOG_PREFIX.concat("ISDS API REST API"),
+            payload,
+            correlationId
+        );
+
+        const headers = {
+            "x-api-key": SC_DEVICE_AWS_KEY,
+            "x-apigw-api-id": SC_DEVICE_AWS_GW_ID,
+            "x-request-id": correlationId,
+            "x-fapi-interaction-id": correlationId,
+            "x-fapi-financial-id": ciConstants.X_FAPI_FINANCIAL_ID_BMO,
+            "x-app-cat-id": APP_CAT_ID,
+            "Content-Type": "application/json"
+        };
+
+        try {
+            const response = await axios.post(apiURL, payload, {
+                timeout: API_TIMEOUT,
+                headers: headers
+            });
+
+            logger.info(
+                LOG_PREFIX.concat("response.status: ", response.status),
+                correlationId
+            );
+
+            logger.logBackendServiceResponse(
+                LOG_PREFIX.concat("ISDS API REST API"),
+                startTime,
+                response.data,
+                correlationId
+            );
+
+            if (response.status === 200) {
+                return resolve(response.data);
+            } else {
+                return reject(response.data);
+            }
+
+        } catch (error) {
+            logger.error(
+                LOG_PREFIX.concat("Error calling ISDS API"),
+                error,
+                correlationId
+            );
+
+            const errorResponse = responseMapper.mapErrorResponse(
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode,
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+            return reject(errorResponse);
+        }
+    });
+};
+
+module.exports = {
+    getIssuedDeviceDetails
+};
