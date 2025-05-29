@@ -759,371 +759,331 @@ module.exports = {
 
 
 
-const logger = require("././common/logger/logger.js");
-const ERRORCODES = require("./customerInfErrorCodes.js");
-const LOG_PREFIX = "customerConsentDeleteUtil.js - ";
-const retrievePartyIdentification = require("../rpi/retrievePartyIdentificationService.js");
-const credentialService = require("../cs/credentialService.js");
-const isamService = require("../isam/isamCustomerGrantsService.js");
-const issuedDeviceService = require("../ida/issuedDeviceService.js"); // New ISDS service
-const responseMapper = require("../helper/customerInfoResponseMapper.js");
+import logger from '../common/logger/logger';
+import { mapResponse, mapErrorResponse } from './helper/customerInfoResponseMapper';
+import retrievePartyViewService from './rpv/retrievePartyViewService';
+import retailConsentService from './tpaa/retailConsentService';
+import axiosConfiguration from './helper/axiosRestClientConfiguration';
+import customerInfoErrorCodes from './helper/customerInfoErrorCodes';
+import customerInfoHelper from './helper/customerInfoHelper';
+import customerInfoConstants from './helper/customerInfoConstants';
+import commonUtil from './helper/commonUtil';
+import sqsService from './sqsService';
+import ssmHelper from '../../common/util/aws/ssmHelper';
+import moment from 'moment-timezone';
+import customerConsentDeleteUtil from './helper/customerConsentDeleteUtil';
+
+const LOG_PREFIX = "customerInfoService.ts - ";
+const FDX_TO_ECIF_SCOPES_PARAM_NAME = process.env.FDX_ECIF_SCOPE_MAP_SSM_PARAM;
+
+function hasActiveConsentAndScopeMatched(retailConsent: any, correlationId: string): boolean {
+    return (
+        customerInfoHelper.hasActiveConsent(retailConsent.accountList, correlationId) &&
+        customerInfoHelper.isScopeMatched(retailConsent, correlationId)
+    );
+}
 
 /**
- * Original method to find IV User from credential service
+ * Enhanced function to delete multiple consents
  */
-const findIVUser = async (args, requestParams, clientId, correlationId, requestId) => {
-    return new Promise(async function (resolve, reject) {
+const deleteMultipleConsents = async (
+    allIVUsersWithGrants: any[],
+    requestParams: any,
+    retailConsent: any,
+    correlationId: string,
+    requestId: string
+): Promise<void> => {
+    logger.info(
+        `${LOG_PREFIX}Starting deletion of ${allIVUsersWithGrants.length} consent(s)`,
+        correlationId
+    );
+
+    const deletionResults = [];
+
+    // Loop through all IV users and delete their consents
+    for (let i = 0; i < allIVUsersWithGrants.length; i++) {
+        const userGrant = allIVUsersWithGrants[i];
+        
         try {
-            const ocifid = await retrievePartyIdentification.getCustomerIdentificationDetails(
-                requestParams,
-                correlationId,
-                requestId
-            );
-
             logger.info(
-                LOG_PREFIX.concat("Retrieved the OCIF-ID from the RPI API: ", ocifid),
+                `${LOG_PREFIX}Deleting consent ${i + 1}/${allIVUsersWithGrants.length} - ivUser: ${userGrant.ivUser}, source: ${userGrant.source}`,
                 correlationId
             );
 
-            const ivUsers = await credentialService.getCustomerISAMCredentials(
-                args,
-                ocifid,
-                correlationId,
+            const deleteRequestParams = {
+                ecifId: requestParams.ecifId,
+                clientId: requestParams.clientId,
+                permissionId: retailConsent.permissionId,
+                permissionLastUpdateDate: retailConsent.permissionLastUpdateDate,
+                ivUser: userGrant.ivUser,
+                grantId: userGrant.grantId
+            };
+
+            await retailConsentService.deleteCustomerActiveConsent(
+                deleteRequestParams, 
+                correlationId, 
                 requestId
             );
 
+            deletionResults.push({
+                success: true,
+                ivUser: userGrant.ivUser,
+                grantId: userGrant.grantId,
+                source: userGrant.source
+            });
+
             logger.info(
-                LOG_PREFIX.concat(ivUsers.length, " ivUser(s) retrieved from the CredentialService."),
+                `${LOG_PREFIX}Successfully deleted consent for ivUser: ${userGrant.ivUser} (${userGrant.source})`,
                 correlationId
             );
 
-            for (let ivUser of ivUsers) {
-                if (!ivUser?.includes("@ciam")) {
-                    ivUser = ivUser + "@ciam";
-                }
+        } catch (deleteError) {
+            logger.error(
+                `${LOG_PREFIX}Failed to delete consent for ivUser: ${userGrant.ivUser} (${userGrant.source})`,
+                deleteError,
+                correlationId
+            );
 
-                const grants = await isamService.getUserGrant(
-                    args,
-                    ivUser,
+            deletionResults.push({
+                success: false,
+                ivUser: userGrant.ivUser,
+                grantId: userGrant.grantId,
+                source: userGrant.source,
+                error: deleteError
+            });
+        }
+    }
+
+    // Log summary of deletion results
+    const successCount = deletionResults.filter(r => r.success).length;
+    const failureCount = deletionResults.filter(r => !r.success).length;
+
+    logger.info(
+        `${LOG_PREFIX}Consent deletion summary - Success: ${successCount}, Failed: ${failureCount}`,
+        correlationId
+    );
+
+    if (successCount > 0) {
+        logger.info(
+            `${LOG_PREFIX}At least one consent deleted successfully. Proceeding with response.`,
+            correlationId
+        );
+    }
+
+    if (failureCount > 0) {
+        logger.warn(
+            `${LOG_PREFIX}Some consent deletions failed, but continuing with the process`,
+            correlationId
+        );
+    }
+};
+
+export const getCustomerInfo = async (event: any, correlationId: string, args: any) => {
+    logger.trace(`${LOG_PREFIX}getCustomerInfo begins`, correlationId);
+
+    let ecifId: string;
+    let clientId: string;
+    const idToken = event.headers['x-bmo-id-token'];
+
+    try {
+        const decodedToken = commonUtil.decodeJWT(idToken, correlationId);
+        ecifId = decodedToken.oid;
+        clientId = decodedToken.client_id;
+    } catch (error) {
+        logger.error(`${LOG_PREFIX}Error while decoding the idToken: ${idToken}`, error, correlationId);
+        return mapErrorResponse(
+            parseInt(customerInfoErrorCodes.VENDOR_ERROR.TOKEN_EXTRACT_ERROR.statusCode),
+            customerInfoErrorCodes.VENDOR_ERROR.TOKEN_EXTRACT_ERROR,
+            correlationId
+        );
+    }
+
+    if (!(ecifId && clientId)) {
+        return mapErrorResponse(
+            parseInt(customerInfoErrorCodes.VENDOR_ERROR.INVALID_INPUT.statusCode),
+            customerInfoErrorCodes.VENDOR_ERROR.INVALID_INPUT,
+            correlationId
+        );
+    }
+
+    logger.info(`${LOG_PREFIX}ecifId: ${ecifId}, clientId: ${clientId}`, correlationId);
+
+    const requestParams = {
+        interactionId: event.headers['x-fapi-interaction-id'],
+        clientId,
+        ecifId
+    };
+
+    try {
+        await axiosConfiguration.configureHttpsAgent(args.ssm, args.sm, correlationId);
+        logger.info(`${LOG_PREFIX}Configuring HttpsAgent for AXIOS is completed`, correlationId);
+    } catch (error) {
+        logger.error(`${LOG_PREFIX}Error while configuring HttpsAgent for AXIOS.`, error, correlationId);
+        return mapErrorResponse(
+            customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode,
+            customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+            correlationId
+        );
+    }
+
+    logger.info(`${LOG_PREFIX}Fetching customer info for ecifId: ${ecifId}, clientId: ${clientId}`, correlationId);
+
+    try {
+        const requestId = `requestId-${correlationId}`;
+        const retailConsentResponse = await retailConsentService.getRetailConsentDetails(requestParams, correlationId, requestId);
+
+        if (!retailConsentResponse.permissions?.[0]) {
+            logger.info(`${LOG_PREFIX}Customer doesn't have any permissions.`, correlationId);
+            return mapErrorResponse(
+                parseInt(customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED.statusCode),
+                customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED,
+                correlationId
+            );
+        }
+
+        const retailConsent = retailConsentResponse.permissions[0];
+
+        if (!hasActiveConsentAndScopeMatched(retailConsent, correlationId)) {
+            logger.info(`${LOG_PREFIX}Customer lacks valid scopes or active consent.`, correlationId);
+            return mapErrorResponse(
+                parseInt(customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED.statusCode),
+                customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED,
+                correlationId
+            );
+        }
+
+        const scopesMatch = await isCustomerConsentedScopesAndDRRegisteredScopesMatched(retailConsent, args.ssm, correlationId);
+
+        logger.info(`${LOG_PREFIX}customerConsentedScopesAndDRConsentScopesMatched: ${scopesMatch}`, correlationId);
+
+        if (!scopesMatch) {
+            logger.info(`${LOG_PREFIX}Scopes don't match, initiating enhanced consent deletion process`, correlationId);
+
+            try {
+                // Use the enhanced method to find all IV users with grants
+                const allIVUsersWithGrants = await customerConsentDeleteUtil.findAllIVUsersWithGrants(
+                    args, 
+                    requestParams, 
+                    clientId, 
+                    correlationId, 
+                    requestId
+                );
+
+                logger.info(
+                    `${LOG_PREFIX}Found ${allIVUsersWithGrants.length} IV user(s) with grants to delete`,
+                    correlationId
+                );
+
+                // Delete consents for all found IV users
+                await deleteMultipleConsents(
+                    allIVUsersWithGrants,
+                    requestParams,
+                    retailConsent,
                     correlationId,
                     requestId
                 );
 
-                for (const grant of grants) {
-                    if (grant.clientId === clientId) {
-                        return resolve([ivUser, grant.id]);
-                    }
-                }
-            }
+                logger.info(`${LOG_PREFIX}Enhanced consent deletion process completed`, correlationId);
 
-            logger.error(
-                LOG_PREFIX.concat(
-                    ERRORCODES.INVALID_RESP_CS_API.code,
-                    " ",
-                    ERRORCODES.INVALID_RESP_CS_API.message,
-                    " Not able to identify the matched iv-user"
-                ),
-                correlationId
-            );
-
-            const errorResponse = responseMapper.mapErrorResponse(
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
-                correlationId
-            );
-
-            return reject(errorResponse);
-
-        } catch (err) {
-            logger.error(
-                LOG_PREFIX.concat(
-                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
-                    " ",
-                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.message
-                ),
-                err,
-                correlationId
-            );
-
-            const errorResponse = responseMapper.mapErrorResponse(
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
-                correlationId
-            );
-
-            return reject(errorResponse);
-        }
-    });
-};
-
-/**
- * New method to find all IV Users from ISDS API
- * Handles array of credentialIdentityInfo objects with multiple UIDs
- */
-const findAllIVUsersFromISDS = async (args, requestParams, clientId, correlationId, requestId) => {
-    return new Promise(async function (resolve, reject) {
-        try {
-            logger.info(
-                LOG_PREFIX.concat("Calling ISDS API to get device details for ecifId: ", requestParams.ecifId),
-                correlationId
-            );
-
-            // Call ISDS API to get device details
-            const isdsResponse = await issuedDeviceService.getIssuedDeviceDetails(
-                requestParams,
-                correlationId,
-                requestId
-            );
-
-            logger.infoWithSanitize(
-                isdsResponse,
-                LOG_PREFIX.concat("ISDS API response received: "),
-                correlationId
-            );
-
-            const allIVUsersWithGrants = [];
-
-            // Handle array of credentialIdentityInfo
-            const credentialInfoArray = isdsResponse?.credentialIdentityInfo;
-            if (!credentialInfoArray || !Array.isArray(credentialInfoArray)) {
+            } catch (deletionError) {
                 logger.error(
-                    LOG_PREFIX.concat("No credentialIdentityInfo array found in ISDS response"),
+                    `${LOG_PREFIX}Error during enhanced consent deletion process`,
+                    deletionError,
                     correlationId
                 );
-                return resolve([]); // Return empty array instead of error to allow other methods to try
-            }
-
-            logger.info(
-                LOG_PREFIX.concat("Found ", credentialInfoArray.length, " credential identity info records"),
-                correlationId
-            );
-
-            // Loop through each credentialIdentityInfo object
-            for (let i = 0; i < credentialInfoArray.length; i++) {
-                const credentialInfo = credentialInfoArray[i];
-                const uid = credentialInfo?.uid;
-
-                if (!uid) {
-                    logger.warn(
-                        LOG_PREFIX.concat("No UID found in credentialIdentityInfo[", i, "], skipping"),
-                        correlationId
-                    );
-                    continue;
-                }
-
-                logger.info(
-                    LOG_PREFIX.concat("Processing UID[", i, "]: ", uid),
-                    correlationId
-                );
-
-                // Use UID directly as ivUser (no @ciam append based on your requirement)
-                const ivUser = uid;
-
+                
+                // Continue with the original single deletion approach as fallback
+                logger.info(`${LOG_PREFIX}Falling back to original single consent deletion`, correlationId);
+                
                 try {
-                    // Get grants for this ivUser
-                    const grants = await isamService.getUserGrant(
-                        args,
-                        ivUser,
-                        correlationId,
+                    const [ivUser, grantId] = await customerConsentDeleteUtil.findIVUser(
+                        args, 
+                        requestParams, 
+                        clientId, 
+                        correlationId, 
                         requestId
                     );
 
-                    logger.info(
-                        LOG_PREFIX.concat("Retrieved ", grants.length, " grant(s) for ivUser: ", ivUser),
+                    const deleteRequestParams = {
+                        ecifId,
+                        clientId,
+                        permissionId: retailConsent.permissionId,
+                        permissionLastUpdateDate: retailConsent.permissionLastUpdateDate,
+                        ivUser,
+                        grantId
+                    };
+
+                    await retailConsentService.deleteCustomerActiveConsent(deleteRequestParams, correlationId, requestId);
+                    logger.info(`${LOG_PREFIX}Fallback consent deletion completed for: ${ivUser}`, correlationId);
+
+                } catch (fallbackError) {
+                    logger.error(
+                        `${LOG_PREFIX}Both enhanced and fallback consent deletion failed`,
+                        fallbackError,
                         correlationId
                     );
-
-                    // Loop through grants to find matching clientId
-                    for (const grant of grants) {
-                        if (grant.clientId === clientId) {
-                            logger.info(
-                                LOG_PREFIX.concat("Found matching grant for clientId: ", clientId, 
-                                ", ivUser: ", ivUser, ", grantId: ", grant.id),
-                                correlationId
-                            );
-
-                            allIVUsersWithGrants.push({
-                                source: 'ISDS',
-                                ivUser: ivUser,
-                                grantId: grant.id,
-                                credentialType: credentialInfo.credentialType,
-                                credentialStatus: credentialInfo.credentialInfo?.credentialStatus
-                            });
-                        }
-                    }
-
-                } catch (grantError) {
-                    logger.warn(
-                        LOG_PREFIX.concat("Failed to get grants for ivUser: ", ivUser),
-                        grantError,
-                        correlationId
-                    );
-                    // Continue with next UID instead of failing completely
                 }
             }
 
-            logger.info(
-                LOG_PREFIX.concat("Found ", allIVUsersWithGrants.length, " IV user(s) with matching grants from ISDS"),
+            return mapErrorResponse(
+                parseInt(customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED.statusCode),
+                customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED,
                 correlationId
             );
-
-            return resolve(allIVUsersWithGrants);
-
-        } catch (err) {
-            logger.error(
-                LOG_PREFIX.concat("Error in findAllIVUsersFromISDS: "),
-                err,
-                correlationId
-            );
-
-            // Return empty array instead of error to allow other methods to try
-            return resolve([]);
         }
-    });
-};
 
-/**
- * Enhanced method that combines both approaches and returns all iv-users with grants
- */
-const findAllIVUsersWithGrants = async (args, requestParams, clientId, correlationId, requestId) => {
-    return new Promise(async function (resolve, reject) {
+        const customerProfileDetail = await retrievePartyViewService.getCustomerProfileDetails(requestParams, correlationId, requestId);
+        logger.infoWithSanitize(customerProfileDetail, `${LOG_PREFIX}Retrieved customer profile details successfully`, correlationId);
+
+        const customerInfoResponse = customerInfoHelper.extractCustomerInfoResponse(customerProfileDetail, correlationId);
+        logger.infoWithSanitize(customerInfoResponse, `${LOG_PREFIX}CustomerInfoResponse mapping completed`, correlationId);
+
+        const dataLastAccessedEventMessage = {
+            customerId: ecifId,
+            clientId,
+            consentId: retailConsent.permissionId,
+            logRecStatus: customerInfoConstants.STATUS_ACTIVE,
+            lastAccessedDate: moment().tz(customerInfoConstants.TIMEZONE_EST).format(customerInfoConstants.LAST_ACCESSED_DATE_FORMAT),
+            fapiInteractionID: correlationId
+        };
+
+        const messagePublished = await sqsService.publishMessage(args.sqsClient, dataLastAccessedEventMessage, correlationId);
+
+        if (!messagePublished) {
+            return mapErrorResponse(
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode,
+                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+                correlationId
+            );
+        }
+
+        logger.info(`${LOG_PREFIX}Event is published to SQS successfully.`, correlationId);
+        return mapResponse(customerInfoResponse, correlationId);
+    } catch (error) {
+        logger.error(`${LOG_PREFIX}Unexpected error while getCustomerInfo.`, error, correlationId);
+        let errorMessage: any = error;
         try {
-            logger.info(
-                LOG_PREFIX.concat("Starting combined search for IV users with clientId: ", clientId),
-                correlationId
-            );
-
-            const allIVUsersWithGrants = [];
-
-            // Method 1: Get IV users from credential service (original approach)
-            try {
-                logger.info(
-                    LOG_PREFIX.concat("Attempting to find IV users via Credential Service"),
-                    correlationId
-                );
-
-                const [credentialIVUser, credentialGrantId] = await findIVUser(
-                    args, 
-                    requestParams, 
-                    clientId, 
-                    correlationId, 
-                    requestId
-                );
-
-                allIVUsersWithGrants.push({
-                    source: 'CredentialService',
-                    ivUser: credentialIVUser,
-                    grantId: credentialGrantId
-                });
-
-                logger.info(
-                    LOG_PREFIX.concat("Found IV user from Credential Service: ", credentialIVUser),
-                    correlationId
-                );
-
-            } catch (credentialError) {
-                logger.warn(
-                    LOG_PREFIX.concat("Failed to get IV user from Credential Service: "),
-                    credentialError,
-                    correlationId
-                );
-            }
-
-            // Method 2: Get all IV users from ISDS API (updated approach for multiple UIDs)
-            try {
-                logger.info(
-                    LOG_PREFIX.concat("Attempting to find IV users via ISDS API"),
-                    correlationId
-                );
-
-                const isdsIVUsers = await findAllIVUsersFromISDS(
-                    args, 
-                    requestParams, 
-                    clientId, 
-                    correlationId, 
-                    requestId
-                );
-
-                // Add all ISDS IV users, checking for duplicates
-                for (const isdsUser of isdsIVUsers) {
-                    const isDuplicate = allIVUsersWithGrants.some(item => 
-                        item.ivUser === isdsUser.ivUser && item.grantId === isdsUser.grantId
-                    );
-
-                    if (!isDuplicate) {
-                        allIVUsersWithGrants.push(isdsUser);
-                        logger.info(
-                            LOG_PREFIX.concat("Added IV user from ISDS: ", isdsUser.ivUser),
-                            correlationId
-                        );
-                    } else {
-                        logger.info(
-                            LOG_PREFIX.concat("ISDS IV user is duplicate, skipping: ", isdsUser.ivUser),
-                            correlationId
-                        );
-                    }
-                }
-
-            } catch (isdsError) {
-                logger.warn(
-                    LOG_PREFIX.concat("Failed to get IV users from ISDS: "),
-                    isdsError,
-                    correlationId
-                );
-            }
-
-            // Check if we found any IV users
-            if (allIVUsersWithGrants.length === 0) {
-                logger.error(
-                    LOG_PREFIX.concat("No IV users found through any method for clientId: ", clientId),
-                    correlationId
-                );
-
-                const errorResponse = responseMapper.mapErrorResponse(
-                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
-                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
-                    correlationId
-                );
-
-                return reject(errorResponse);
-            }
-
-            logger.info(
-                LOG_PREFIX.concat("Total unique IV users found: ", allIVUsersWithGrants.length),
-                correlationId
-            );
-
-            // Log summary of found IV users
-            allIVUsersWithGrants.forEach((user, index) => {
-                logger.info(
-                    LOG_PREFIX.concat("IV User [", index + 1, "]: ", user.ivUser, 
-                    " (Source: ", user.source, ", GrantId: ", user.grantId, ")"),
-                    correlationId
-                );
-            });
-
-            return resolve(allIVUsersWithGrants);
-
-        } catch (err) {
-            logger.error(
-                LOG_PREFIX.concat("Error in findAllIVUsersWithGrants: "),
-                err,
-                correlationId
-            );
-
-            const errorResponse = responseMapper.mapErrorResponse(
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
-                correlationId
-            );
-
-            return reject(errorResponse);
+            errorMessage = errorMessage.body ? JSON.parse(errorMessage.body) : errorMessage.message;
+        } catch (e) {
+            logger.error(`Error on parsing error message`, e, correlationId);
         }
-    });
+
+        return mapErrorResponse(
+            error.statusCode ?? parseInt(customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode),
+            customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+            correlationId
+        );
+    }
 };
 
-module.exports = { 
-    findIVUser, 
-    findAllIVUsersFromISDS, 
-    findAllIVUsersWithGrants 
+const isCustomerConsentedScopesAndDRRegisteredScopesMatched = async (
+    retailConsent: any,
+    ssm: any,
+    correlationId: string
+): Promise<boolean> => {
+    const fdxToEcifString = await ssmHelper.getSSMValue(FDX_TO_ECIF_SCOPES_PARAM_NAME, ssm, correlationId);
+    const fdxToEcif = JSON.parse(fdxToEcifString);
+    logger.debug(`${LOG_PREFIX}fdxToEcif received from SSM:`, fdxToEcif);
+
+    return customerInfoHelper.isCustomerConsentedScopesAndDRConsentedScopesMatched(retailConsent, fdxToEcif, correlationId);
 };
