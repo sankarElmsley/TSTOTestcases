@@ -753,6 +753,12 @@ module.exports = {
 
 
 ----------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
 const logger = require("././common/logger/logger.js");
 const ERRORCODES = require("./customerInfErrorCodes.js");
 const LOG_PREFIX = "customerConsentDeleteUtil.js - ";
@@ -851,9 +857,10 @@ const findIVUser = async (args, requestParams, clientId, correlationId, requestI
 };
 
 /**
- * New method to find IV User from ISDS API
+ * New method to find all IV Users from ISDS API
+ * Handles array of credentialIdentityInfo objects with multiple UIDs
  */
-const findIVUserFromISDS = async (args, requestParams, clientId, correlationId, requestId) => {
+const findAllIVUsersFromISDS = async (args, requestParams, clientId, correlationId, requestId) => {
     return new Promise(async function (resolve, reject) {
         try {
             logger.info(
@@ -874,88 +881,103 @@ const findIVUserFromISDS = async (args, requestParams, clientId, correlationId, 
                 correlationId
             );
 
-            // Extract UID from ISDS response
-            const uid = isdsResponse?.credentialIdentityInfo?.uid;
-            if (!uid) {
+            const allIVUsersWithGrants = [];
+
+            // Handle array of credentialIdentityInfo
+            const credentialInfoArray = isdsResponse?.credentialIdentityInfo;
+            if (!credentialInfoArray || !Array.isArray(credentialInfoArray)) {
                 logger.error(
-                    LOG_PREFIX.concat("No UID found in ISDS response"),
+                    LOG_PREFIX.concat("No credentialIdentityInfo array found in ISDS response"),
                     correlationId
                 );
-                const errorResponse = responseMapper.mapErrorResponse(
-                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
-                    ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
-                    correlationId
-                );
-                return reject(errorResponse);
+                return resolve([]); // Return empty array instead of error to allow other methods to try
             }
 
             logger.info(
-                LOG_PREFIX.concat("Retrieved UID from ISDS API: ", uid),
+                LOG_PREFIX.concat("Found ", credentialInfoArray.length, " credential identity info records"),
                 correlationId
             );
 
-            // Convert UID to ivUser format
-            let ivUser = uid;
-            if (!ivUser.includes("@ciam")) {
-                ivUser = ivUser + "@ciam";
-            }
+            // Loop through each credentialIdentityInfo object
+            for (let i = 0; i < credentialInfoArray.length; i++) {
+                const credentialInfo = credentialInfoArray[i];
+                const uid = credentialInfo?.uid;
 
-            logger.info(
-                LOG_PREFIX.concat("Formatted ivUser: ", ivUser),
-                correlationId
-            );
-
-            // Get grants for this ivUser
-            const grants = await isamService.getUserGrant(
-                args,
-                ivUser,
-                correlationId,
-                requestId
-            );
-
-            logger.info(
-                LOG_PREFIX.concat("Retrieved ", grants.length, " grant(s) for ivUser: ", ivUser),
-                correlationId
-            );
-
-            // Find matching grant for the clientId
-            for (const grant of grants) {
-                if (grant.clientId === clientId) {
-                    logger.info(
-                        LOG_PREFIX.concat("Found matching grant for clientId: ", clientId, ", grantId: ", grant.id),
+                if (!uid) {
+                    logger.warn(
+                        LOG_PREFIX.concat("No UID found in credentialIdentityInfo[", i, "], skipping"),
                         correlationId
                     );
-                    return resolve([ivUser, grant.id]);
+                    continue;
+                }
+
+                logger.info(
+                    LOG_PREFIX.concat("Processing UID[", i, "]: ", uid),
+                    correlationId
+                );
+
+                // Use UID directly as ivUser (no @ciam append based on your requirement)
+                const ivUser = uid;
+
+                try {
+                    // Get grants for this ivUser
+                    const grants = await isamService.getUserGrant(
+                        args,
+                        ivUser,
+                        correlationId,
+                        requestId
+                    );
+
+                    logger.info(
+                        LOG_PREFIX.concat("Retrieved ", grants.length, " grant(s) for ivUser: ", ivUser),
+                        correlationId
+                    );
+
+                    // Loop through grants to find matching clientId
+                    for (const grant of grants) {
+                        if (grant.clientId === clientId) {
+                            logger.info(
+                                LOG_PREFIX.concat("Found matching grant for clientId: ", clientId, 
+                                ", ivUser: ", ivUser, ", grantId: ", grant.id),
+                                correlationId
+                            );
+
+                            allIVUsersWithGrants.push({
+                                source: 'ISDS',
+                                ivUser: ivUser,
+                                grantId: grant.id,
+                                credentialType: credentialInfo.credentialType,
+                                credentialStatus: credentialInfo.credentialInfo?.credentialStatus
+                            });
+                        }
+                    }
+
+                } catch (grantError) {
+                    logger.warn(
+                        LOG_PREFIX.concat("Failed to get grants for ivUser: ", ivUser),
+                        grantError,
+                        correlationId
+                    );
+                    // Continue with next UID instead of failing completely
                 }
             }
 
-            logger.error(
-                LOG_PREFIX.concat("No matching grant found for clientId: ", clientId),
+            logger.info(
+                LOG_PREFIX.concat("Found ", allIVUsersWithGrants.length, " IV user(s) with matching grants from ISDS"),
                 correlationId
             );
 
-            const errorResponse = responseMapper.mapErrorResponse(
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
-                correlationId
-            );
-
-            return reject(errorResponse);
+            return resolve(allIVUsersWithGrants);
 
         } catch (err) {
             logger.error(
-                LOG_PREFIX.concat("Error in findIVUserFromISDS: "),
+                LOG_PREFIX.concat("Error in findAllIVUsersFromISDS: "),
                 err,
                 correlationId
             );
 
-            const errorResponse = responseMapper.mapErrorResponse(
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR.code,
-                ERRORCODES.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
-                correlationId
-            );
-
-            return reject(errorResponse);
+            // Return empty array instead of error to allow other methods to try
+            return resolve([]);
         }
     });
 };
@@ -1007,14 +1029,14 @@ const findAllIVUsersWithGrants = async (args, requestParams, clientId, correlati
                 );
             }
 
-            // Method 2: Get IV users from ISDS API (new approach)
+            // Method 2: Get all IV users from ISDS API (updated approach for multiple UIDs)
             try {
                 logger.info(
                     LOG_PREFIX.concat("Attempting to find IV users via ISDS API"),
                     correlationId
                 );
 
-                const [isdsIVUser, isdsGrantId] = await findIVUserFromISDS(
+                const isdsIVUsers = await findAllIVUsersFromISDS(
                     args, 
                     requestParams, 
                     clientId, 
@@ -1022,32 +1044,29 @@ const findAllIVUsersWithGrants = async (args, requestParams, clientId, correlati
                     requestId
                 );
 
-                // Check if this is a duplicate
-                const isDuplicate = allIVUsersWithGrants.some(item => 
-                    item.ivUser === isdsIVUser && item.grantId === isdsGrantId
-                );
-
-                if (!isDuplicate) {
-                    allIVUsersWithGrants.push({
-                        source: 'ISDS',
-                        ivUser: isdsIVUser,
-                        grantId: isdsGrantId
-                    });
-
-                    logger.info(
-                        LOG_PREFIX.concat("Found IV user from ISDS: ", isdsIVUser),
-                        correlationId
+                // Add all ISDS IV users, checking for duplicates
+                for (const isdsUser of isdsIVUsers) {
+                    const isDuplicate = allIVUsersWithGrants.some(item => 
+                        item.ivUser === isdsUser.ivUser && item.grantId === isdsUser.grantId
                     );
-                } else {
-                    logger.info(
-                        LOG_PREFIX.concat("ISDS IV user is duplicate, skipping: ", isdsIVUser),
-                        correlationId
-                    );
+
+                    if (!isDuplicate) {
+                        allIVUsersWithGrants.push(isdsUser);
+                        logger.info(
+                            LOG_PREFIX.concat("Added IV user from ISDS: ", isdsUser.ivUser),
+                            correlationId
+                        );
+                    } else {
+                        logger.info(
+                            LOG_PREFIX.concat("ISDS IV user is duplicate, skipping: ", isdsUser.ivUser),
+                            correlationId
+                        );
+                    }
                 }
 
             } catch (isdsError) {
                 logger.warn(
-                    LOG_PREFIX.concat("Failed to get IV user from ISDS: "),
+                    LOG_PREFIX.concat("Failed to get IV users from ISDS: "),
                     isdsError,
                     correlationId
                 );
@@ -1070,9 +1089,18 @@ const findAllIVUsersWithGrants = async (args, requestParams, clientId, correlati
             }
 
             logger.info(
-                LOG_PREFIX.concat("Total IV users found: ", allIVUsersWithGrants.length),
+                LOG_PREFIX.concat("Total unique IV users found: ", allIVUsersWithGrants.length),
                 correlationId
             );
+
+            // Log summary of found IV users
+            allIVUsersWithGrants.forEach((user, index) => {
+                logger.info(
+                    LOG_PREFIX.concat("IV User [", index + 1, "]: ", user.ivUser, 
+                    " (Source: ", user.source, ", GrantId: ", user.grantId, ")"),
+                    correlationId
+                );
+            });
 
             return resolve(allIVUsersWithGrants);
 
@@ -1096,6 +1124,6 @@ const findAllIVUsersWithGrants = async (args, requestParams, clientId, correlati
 
 module.exports = { 
     findIVUser, 
-    findIVUserFromISDS, 
+    findAllIVUsersFromISDS, 
     findAllIVUsersWithGrants 
 };
