@@ -773,7 +773,7 @@ import customerConsentDeleteUtil from './helper/customerConsentDeleteUtil';
 const LOG_PREFIX = "customerInfoService.ts - ";
 const FDX_TO_ECIF_SCOPES_PARAM_NAME = process.env.FDX_ECIF_SCOPE_MAP_SSM_PARAM;
 
-function hasActiveConsentAndScopeMatched(retailConsent: any, correlationId: string): boolean {
+function hasActiveConsentAndScopeMatched(retailConsent, correlationId) {
     return (
         customerInfoHelper.hasActiveConsent(retailConsent.accountList, correlationId) &&
         customerInfoHelper.isScopeMatched(retailConsent, correlationId)
@@ -790,12 +790,12 @@ function hasActiveConsentAndScopeMatched(retailConsent: any, correlationId: stri
  * @param {string} requestId - Request ID for logging
  */
 const deleteMultipleConsents = async (
-    allIVUsersWithGrants: any[],
-    requestParams: any,
-    retailConsent: any,
-    correlationId: string,
-    requestId: string
-): Promise<void> => {
+    allIVUsersWithGrants,
+    requestParams,
+    retailConsent,
+    correlationId,
+    requestId
+) => {
     logger.info(
         `${LOG_PREFIX}Starting deletion of ${allIVUsersWithGrants.length} consent(s)`,
         correlationId
@@ -897,11 +897,11 @@ const deleteMultipleConsents = async (
     });
 };
 
-export const getCustomerInfo = async (event: any, correlationId: string, args: any) => {
+export const getCustomerInfo = async (event, correlationId, args) => {
     logger.trace(`${LOG_PREFIX}getCustomerInfo begins`, correlationId);
 
-    let ecifId: string;
-    let clientId: string;
+    let ecifId;
+    let clientId;
     const idToken = event.headers['x-bmo-id-token'];
 
     try {
@@ -1096,10 +1096,10 @@ export const getCustomerInfo = async (event: any, correlationId: string, args: a
 };
 
 const isCustomerConsentedScopesAndDRRegisteredScopesMatched = async (
-    retailConsent: any,
-    ssm: any,
-    correlationId: string
-): Promise<boolean> => {
+    retailConsent,
+    ssm,
+    correlationId
+) => {
     const fdxToEcifString = await ssmHelper.getSSMValue(FDX_TO_ECIF_SCOPES_PARAM_NAME, ssm, correlationId);
     const fdxToEcif = JSON.parse(fdxToEcifString);
     logger.debug(`${LOG_PREFIX}fdxToEcif received from SSM:`, fdxToEcif);
