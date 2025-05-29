@@ -797,7 +797,7 @@ const deleteMultipleConsents = async (
     requestId
 ) => {
     logger.info(
-        `${LOG_PREFIX}Starting deletion of ${allIVUsersWithGrants.length} consent(s)`,
+        LOG_PREFIX.concat('Starting deletion of ', allIVUsersWithGrants.length, ' consent(s)'),
         correlationId
     );
 
@@ -809,7 +809,7 @@ const deleteMultipleConsents = async (
         
         try {
             logger.info(
-                `${LOG_PREFIX}Deleting consent ${i + 1}/${allIVUsersWithGrants.length} - ivUser: ${userGrant.ivUser}, source: ${userGrant.source}`,
+                LOG_PREFIX.concat('Deleting consent ', i + 1, '/', allIVUsersWithGrants.length, ' - ivUser: ', userGrant.ivUser, ', source: ', userGrant.source),
                 correlationId
             );
 
@@ -836,13 +836,13 @@ const deleteMultipleConsents = async (
             });
 
             logger.info(
-                `${LOG_PREFIX}Successfully deleted consent for ivUser: ${userGrant.ivUser} (${userGrant.source})`,
+                LOG_PREFIX.concat('Successfully deleted consent for ivUser: ', userGrant.ivUser, ' (', userGrant.source, ')'),
                 correlationId
             );
 
         } catch (deleteError) {
             logger.error(
-                `${LOG_PREFIX}Failed to delete consent for ivUser: ${userGrant.ivUser} (${userGrant.source})`,
+                LOG_PREFIX.concat('Failed to delete consent for ivUser: ', userGrant.ivUser, ' (', userGrant.source, ')'),
                 deleteError,
                 correlationId
             );
@@ -862,20 +862,20 @@ const deleteMultipleConsents = async (
     const failureCount = deletionResults.filter(r => !r.success).length;
 
     logger.info(
-        `${LOG_PREFIX}Consent deletion summary - Success: ${successCount}, Failed: ${failureCount}`,
+        LOG_PREFIX.concat('Consent deletion summary - Success: ', successCount, ', Failed: ', failureCount),
         correlationId
     );
 
     if (successCount > 0) {
         logger.info(
-            `${LOG_PREFIX}At least one consent deleted successfully. Proceeding with response.`,
+            LOG_PREFIX.concat('At least one consent deleted successfully. Proceeding with response.'),
             correlationId
         );
     }
 
     if (failureCount > 0) {
         logger.warn(
-            `${LOG_PREFIX}Some consent deletions failed, but continuing with the process`,
+            LOG_PREFIX.concat('Some consent deletions failed, but continuing with the process'),
             correlationId
         );
     }
@@ -884,12 +884,12 @@ const deleteMultipleConsents = async (
     deletionResults.forEach((result, index) => {
         if (result.success) {
             logger.debug(
-                `${LOG_PREFIX}Deletion [${index + 1}] SUCCESS: ${result.ivUser} (${result.source})`,
+                LOG_PREFIX.concat('Deletion [', index + 1, '] SUCCESS: ', result.ivUser, ' (', result.source, ')'),
                 correlationId
             );
         } else {
             logger.error(
-                `${LOG_PREFIX}Deletion [${index + 1}] FAILED: ${result.ivUser} (${result.source})`,
+                LOG_PREFIX.concat('Deletion [', index + 1, '] FAILED: ', result.ivUser, ' (', result.source, ')'),
                 result.error,
                 correlationId
             );
@@ -898,7 +898,7 @@ const deleteMultipleConsents = async (
 };
 
 export const getCustomerInfo = async (event, correlationId, args) => {
-    logger.trace(`${LOG_PREFIX}getCustomerInfo begins`, correlationId);
+    logger.trace(LOG_PREFIX.concat('getCustomerInfo begins'), correlationId);
 
     let ecifId;
     let clientId;
@@ -909,7 +909,7 @@ export const getCustomerInfo = async (event, correlationId, args) => {
         ecifId = decodedToken.oid;
         clientId = decodedToken.client_id;
     } catch (error) {
-        logger.error(`${LOG_PREFIX}Error while decoding the idToken: ${idToken}`, error, correlationId);
+        logger.error(LOG_PREFIX.concat('Error while decoding the idToken: ', idToken), error, correlationId);
         return mapErrorResponse(
             parseInt(customerInfoErrorCodes.VENDOR_ERROR.TOKEN_EXTRACT_ERROR.statusCode),
             customerInfoErrorCodes.VENDOR_ERROR.TOKEN_EXTRACT_ERROR,
@@ -925,7 +925,7 @@ export const getCustomerInfo = async (event, correlationId, args) => {
         );
     }
 
-    logger.info(`${LOG_PREFIX}ecifId: ${ecifId}, clientId: ${clientId}`, correlationId);
+    logger.info(LOG_PREFIX.concat('ecifId: ', ecifId, ', clientId: ', clientId), correlationId);
 
     const requestParams = {
         interactionId: event.headers['x-fapi-interaction-id'],
@@ -935,9 +935,9 @@ export const getCustomerInfo = async (event, correlationId, args) => {
 
     try {
         await axiosConfiguration.configureHttpsAgent(args.ssm, args.sm, correlationId);
-        logger.info(`${LOG_PREFIX}Configuring HttpsAgent for AXIOS is completed`, correlationId);
+        logger.info(LOG_PREFIX.concat('Configuring HttpsAgent for AXIOS is completed'), correlationId);
     } catch (error) {
-        logger.error(`${LOG_PREFIX}Error while configuring HttpsAgent for AXIOS.`, error, correlationId);
+        logger.error(LOG_PREFIX.concat('Error while configuring HttpsAgent for AXIOS.'), error, correlationId);
         return mapErrorResponse(
             customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode,
             customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
@@ -945,14 +945,14 @@ export const getCustomerInfo = async (event, correlationId, args) => {
         );
     }
 
-    logger.info(`${LOG_PREFIX}Fetching customer info for ecifId: ${ecifId}, clientId: ${clientId}`, correlationId);
+    logger.info(LOG_PREFIX.concat('Fetching customer info for ecifId: ', ecifId, ', clientId: ', clientId), correlationId);
 
     try {
         const requestId = `requestId-${correlationId}`;
         const retailConsentResponse = await retailConsentService.getRetailConsentDetails(requestParams, correlationId, requestId);
 
         if (!retailConsentResponse.permissions?.[0]) {
-            logger.info(`${LOG_PREFIX}Customer doesn't have any permissions.`, correlationId);
+            logger.info(LOG_PREFIX.concat("Customer doesn't have any permissions."), correlationId);
             return mapErrorResponse(
                 parseInt(customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED.statusCode),
                 customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED,
@@ -963,7 +963,7 @@ export const getCustomerInfo = async (event, correlationId, args) => {
         const retailConsent = retailConsentResponse.permissions[0];
 
         if (!hasActiveConsentAndScopeMatched(retailConsent, correlationId)) {
-            logger.info(`${LOG_PREFIX}Customer lacks valid scopes or active consent.`, correlationId);
+            logger.info(LOG_PREFIX.concat('Customer lacks valid scopes or active consent.'), correlationId);
             return mapErrorResponse(
                 parseInt(customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED.statusCode),
                 customerInfoErrorCodes.VENDOR_ERROR.CUSTOMER_NOT_AUTHORIZED,
@@ -973,10 +973,10 @@ export const getCustomerInfo = async (event, correlationId, args) => {
 
         const scopesMatch = await isCustomerConsentedScopesAndDRRegisteredScopesMatched(retailConsent, args.ssm, correlationId);
 
-        logger.info(`${LOG_PREFIX}customerConsentedScopesAndDRConsentScopesMatched: ${scopesMatch}`, correlationId);
+        logger.info(LOG_PREFIX.concat('customerConsentedScopesAndDRConsentScopesMatched: ', scopesMatch), correlationId);
 
         if (!scopesMatch) {
-            logger.info(`${LOG_PREFIX}Scopes don't match, initiating enhanced consent deletion process`, correlationId);
+            logger.info(LOG_PREFIX.concat("Scopes don't match, initiating enhanced consent deletion process"), correlationId);
 
             try {
                 // ENHANCED APPROACH: Use the enhanced method to find all IV users with grants
@@ -989,7 +989,7 @@ export const getCustomerInfo = async (event, correlationId, args) => {
                 );
 
                 logger.info(
-                    `${LOG_PREFIX}Found ${allIVUsersWithGrants.length} IV user(s) with grants to delete`,
+                    LOG_PREFIX.concat('Found ', allIVUsersWithGrants.length, ' IV user(s) with grants to delete'),
                     correlationId
                 );
 
@@ -1002,17 +1002,17 @@ export const getCustomerInfo = async (event, correlationId, args) => {
                     requestId
                 );
 
-                logger.info(`${LOG_PREFIX}Enhanced consent deletion process completed`, correlationId);
+                logger.info(LOG_PREFIX.concat('Enhanced consent deletion process completed'), correlationId);
 
             } catch (deletionError) {
                 logger.error(
-                    `${LOG_PREFIX}Error during enhanced consent deletion process`,
+                    LOG_PREFIX.concat('Error during enhanced consent deletion process'),
                     deletionError,
                     correlationId
                 );
                 
                 // FALLBACK APPROACH: Continue with the original single deletion approach as fallback
-                logger.info(`${LOG_PREFIX}Falling back to original single consent deletion`, correlationId);
+                logger.info(LOG_PREFIX.concat('Falling back to original single consent deletion'), correlationId);
                 
                 try {
                     const [ivUser, grantId] = await customerConsentDeleteUtil.findIVUser(
@@ -1033,11 +1033,11 @@ export const getCustomerInfo = async (event, correlationId, args) => {
                     };
 
                     await retailConsentService.deleteCustomerActiveConsent(deleteRequestParams, correlationId, requestId);
-                    logger.info(`${LOG_PREFIX}Fallback consent deletion completed for: ${ivUser}`, correlationId);
+                    logger.info(LOG_PREFIX.concat('Fallback consent deletion completed for: ', ivUser), correlationId);
 
                 } catch (fallbackError) {
                     logger.error(
-                        `${LOG_PREFIX}Both enhanced and fallback consent deletion failed`,
+                        LOG_PREFIX.concat('Both enhanced and fallback consent deletion failed'),
                         fallbackError,
                         correlationId
                     );
@@ -1052,10 +1052,10 @@ export const getCustomerInfo = async (event, correlationId, args) => {
         }
 
         const customerProfileDetail = await retrievePartyViewService.getCustomerProfileDetails(requestParams, correlationId, requestId);
-        logger.infoWithSanitize(customerProfileDetail, `${LOG_PREFIX}Retrieved customer profile details successfully`, correlationId);
+        logger.infoWithSanitize(customerProfileDetail, LOG_PREFIX.concat('Retrieved customer profile details successfully'), correlationId);
 
         const customerInfoResponse = customerInfoHelper.extractCustomerInfoResponse(customerProfileDetail, correlationId);
-        logger.infoWithSanitize(customerInfoResponse, `${LOG_PREFIX}CustomerInfoResponse mapping completed`, correlationId);
+        logger.infoWithSanitize(customerInfoResponse, LOG_PREFIX.concat('CustomerInfoResponse mapping completed'), correlationId);
 
         const dataLastAccessedEventMessage = {
             customerId: ecifId,
@@ -1076,15 +1076,15 @@ export const getCustomerInfo = async (event, correlationId, args) => {
             );
         }
 
-        logger.info(`${LOG_PREFIX}Event is published to SQS successfully.`, correlationId);
+        logger.info(LOG_PREFIX.concat('Event is published to SQS successfully.'), correlationId);
         return mapResponse(customerInfoResponse, correlationId);
     } catch (error) {
-        logger.error(`${LOG_PREFIX}Unexpected error while getCustomerInfo.`, error, correlationId);
+        logger.error(LOG_PREFIX.concat('Unexpected error while getCustomerInfo.'), error, correlationId);
         let errorMessage: any = error;
         try {
             errorMessage = errorMessage.body ? JSON.parse(errorMessage.body) : errorMessage.message;
         } catch (e) {
-            logger.error(`Error on parsing error message`, e, correlationId);
+            logger.error('Error on parsing error message', e, correlationId);
         }
 
         return mapErrorResponse(
@@ -1102,7 +1102,7 @@ const isCustomerConsentedScopesAndDRRegisteredScopesMatched = async (
 ) => {
     const fdxToEcifString = await ssmHelper.getSSMValue(FDX_TO_ECIF_SCOPES_PARAM_NAME, ssm, correlationId);
     const fdxToEcif = JSON.parse(fdxToEcifString);
-    logger.debug(`${LOG_PREFIX}fdxToEcif received from SSM:`, fdxToEcif);
+    logger.debug(LOG_PREFIX.concat('fdxToEcif received from SSM:'), fdxToEcif);
 
     return customerInfoHelper.isCustomerConsentedScopesAndDRConsentedScopesMatched(retailConsent, fdxToEcif, correlationId);
 };
