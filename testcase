@@ -611,115 +611,140 @@ module.exports = {
 };
 
 ----------------------------------
-const logger = require("../../common/logger/logger.js");
-const ciConstants = require("../helper/customerInfoConstants.js");
-const customerInfoErrorCodes = require("../helper/customerInfoErrorCodes.js");
-const requestMapper = require("./issuedDeviceRequestMapper.js");
-const responseMapper = require("../helper/customerInfoResponseMapper.js");
-const axios = require("axios");
-const crossAccountSSMParamHelper = require("../../common/util/aws/crossAccountSSMParamHelper.js");
 
-const LOG_PREFIX = "issuedDeviceService.js - ";
-const API_BASE_URL = process.env.ISSUED_DEVICE_ADMINISTRATION_BASE_URI || "https://api2-dev.bmogc.net";
-const API_END_POINT = "/api/issued-device-administration/alias/ecif/get";
+
+
+const stage = process.env.STAGE || "sandbox";
+const region = process.env.REGION;
+const regionShortCode = process.env.REGION_SHORT_CODE;
+const environment = process.env.ENVIRONMENT;
+const stageShortCode = process.env.STAGE_SHORT_CODE;
+const SC_DLA_EVENT_SQS_STAGE = process.env.SC_DLA_EVENT_SQS_STAGE;
+
+const rpvStage = process.env.RPV_STAGE;
+const rpiStage = process.env.RPI_STAGE;
+const tpaaStage = process.env.TPAA_STAGE;
+const isdsStage = process.env.ISDS_STAGE || "dev"; // New stage for ISDS
+
+const dev1AccountNumberSimple = process.env.DEV1_ACCOUNT_ID_SIMPLE;
+const dev2AccountNumberSimple = process.env.DEV2_ACCOUNT_ID_SIMPLE;
+
 const APP_CAT_ID = process.env.APP_CAT_ID;
-const API_TIMEOUT = process.env.BACKEND_API_TIMEOUT;
-
-const getIssuedDeviceDetails = async (requestParams, correlationId, requestId) => {
-    logger.trace(
-        LOG_PREFIX.concat("In getIssuedDeviceDetails begins.. with requestId: ", requestId),
-        correlationId
-    );
-
-    return new Promise(async function (resolve, reject) {
-        const startTime = Date.now();
-        const apiURL = API_BASE_URL + API_END_POINT;
-
-        // Get SSM parameters for ISDS API
-        let deviceSSMParams;
-        try {
-            deviceSSMParams = await crossAccountSSMParamHelper.getCrossAccountSSMParams(
-                ciConstants.CROSS_ACCOUNT_ROLE_ARN_CI_DEV2,
-                ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_API_KEY,
-                ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_AWS_GW_ID,
-                correlationId
-            );
-        } catch (error) {
-            logger.error(
-                LOG_PREFIX.concat("Error retrieving SSM params for ISDS API"),
-                error,
-                correlationId
-            );
-            const errorResponse = responseMapper.mapErrorResponse(
-                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode,
-                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
-                correlationId
-            );
-            return reject(errorResponse);
-        }
-
-        const SC_DEVICE_AWS_KEY = deviceSSMParams[ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_API_KEY];
-        const SC_DEVICE_AWS_GW_ID = deviceSSMParams[ciConstants.SSM_PARAM.SC_GET_ISSUED_DEVICE_AWS_GW_ID];
-
-        const payload = requestMapper.getIssuedDeviceRequest(requestParams.ecifId, correlationId);
-
-        logger.logBackendServiceRequest(
-            LOG_PREFIX.concat("ISDS API REST API"),
-            payload,
-            correlationId
-        );
-
-        const headers = {
-            "x-api-key": SC_DEVICE_AWS_KEY,
-            "x-apigw-api-id": SC_DEVICE_AWS_GW_ID,
-            "x-request-id": correlationId,
-            "x-fapi-interaction-id": correlationId,
-            "x-fapi-financial-id": ciConstants.X_FAPI_FINANCIAL_ID_BMO,
-            "x-app-cat-id": APP_CAT_ID,
-            "Content-Type": "application/json"
-        };
-
-        try {
-            const response = await axios.post(apiURL, payload, {
-                timeout: API_TIMEOUT,
-                headers: headers
-            });
-
-            logger.info(
-                LOG_PREFIX.concat("response.status: ", response.status),
-                correlationId
-            );
-
-            logger.logBackendServiceResponse(
-                LOG_PREFIX.concat("ISDS API REST API"),
-                startTime,
-                response.data,
-                correlationId
-            );
-
-            if (response.status === 200) {
-                return resolve(response.data);
-            } else {
-                return reject(response.data);
-            }
-
-        } catch (error) {
-            logger.error(
-                LOG_PREFIX.concat("Error calling ISDS API"),
-                error,
-                correlationId
-            );
-
-            const errorResponse = responseMapper.mapErrorResponse(
-                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode,
-                customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
-                correlationId
-            );
-            return reject(errorResponse);
-        }
-    });
-};
 
 module.exports = {
-    getIssuedDeviceDetails
+  STAGES: {
+    Sandbox: "sandbox",
+    Dev: "dev",
+    sit2: "sit2",
+    sit3: "sit3",
+    sit4: "sit4",
+    sit5: "sit5",
+    sit6: "sit6",
+    sit7: "sit7",
+    sit8: "sit8",
+    Perf: "perf1",
+    Perf2: "perf2",
+    Prod: "prd"
+  },
+  EXECUTION_MODE: "mock",
+  RESULT_TYPE_STATUS_ACTIVE: "Active",
+  LIGHTWEIGHT_INTERNAL: "lightweightInternal",
+  COUNTRY_CANADA: "CAN",
+  APP_CAT_ID: APP_CAT_ID,
+  RPV_IDENTIFIER_TYPE_ECIF: "ECIF",
+  RPI_OUTPUT_TYPE: "OCIF",
+  RPV_PERSON_FILTER: ["person", "basic"],
+  
+  // ISDS Constants
+  IDA_EXPAND_LIST: "all",
+  IDA_SCOPE: "default",
+  IDA_BUSINESS_CATEGORY: "WEALTH",
+  
+  RPV_ADDRESS_TYPE: {
+    HOME: "100000",
+    BUSINESS: "100001"
+  },
+  RPV_PERSON_NAME_USAGE_TYPE: {
+    LEGAL: "1"
+  },
+  RPV_CONTACT_METHOD_TYPE: {
+    PHONE: "1",
+    EMAIL: "2"
+  },
+  TIMEZONE_EST: "Canada/Eastern",
+  DATE_FORMAT: "YYYYMMDD",
+  LAST_ACCESSED_DATE_FORMAT: "YYYY-MM-DD HH:mm:ss",
+  STATUS_ACTIVE: "Active",
+  
+  CROSS_ACCOUNT_ROLE_ARN_CI_DEV1: `arn:aws:iam::${dev1AccountNumberSimple}:role/86836/pbbopbkcustomerinfoapilambda/CHS-OPB-${environment}-${region}-${stage}-opbk-ci-param-cross-acen-01e`,
+  CROSS_ACCOUNT_ROLE_ARN_CI_DEV2: `arn:aws:iam::${dev2AccountNumberSimple}:role/86836/pbbopbkcustomerinfoapilambda/CHS-OPB-${environment}-${region}-${stage}-opbk-ci-param-cross-acon-zolo`,
+  
+  SYMCOR_TELEPHONE_TYPE: {
+    BUSINESS: "BUSINESS",
+    CELL: "CELL",
+    FAX: "FAX",
+    PAGER: "PAGER",
+    TTYTDD: "TTY/TDD"
+  },
+  SYMCOR_ADDRESS_TYPE: {
+    HOME: "HOME",
+    BUSINESS: "BUSINESS"
+  },
+  RPV_TELEPHONE_TYPE: {
+    HOME: "100000",
+    BUSINESS: "100001",
+    PERMANENT_BUSINESS_PRIMARY_PHONE: "100002",
+    BUSINESS_PRIMARY_CELL_PHONE: "100005",
+    FAX: {
+      PRIMARY_RESIDENTIAL: "100112",
+      PRIMARY_BUSINESS: "100116"
+    },
+    PAGER: {
+      PRIMARY_RESIDENTIAL: "100113",
+      PRIMARY_BUSINESS: "100117"
+    },
+    TTYTDD: {
+      PRIMARY_RESIDENTIAL: "100114",
+      PRIMARY_BUSINESS: "100118"
+    }
+  },
+  RPV_EMAIL_TYPE: ["100008", "100009", "100148", "100149"],
+  PARTY_TYPE: {
+    RESIDENTIAL_PRIMARY: "p",
+    BUSINESS_PRIMARY: "o"
+  },
+  CUSTOMER_CONSENT_SCOPE: "Cust_Contact",
+  RC_USER_NOT_FOUND: "E100",
+  RC_INVALID_CLIENT: "E101",
+  SSM_PARAM: {
+    SC_DATA_ACCESS_EVENT_QUEUE_URI: `/SCCG/DC-SymcorThirdPartyAccessArrangement/${SC_DLA_EVENT_SQS_STAGE}/CDK/SymcorThirdPartyAccessArrQueue/URI`,
+    SC_GET_THIRD_PARTY_ACCESS_ARRANGEMENT_API_KEY: `/SCCG/DeploymentConfig/ThirdPartyAccessArrangement/SCCG-ThirdPartyAccessArrangement/ApiKey/${tpaaStage}/Value`,
+    SC_GET_THIRD_PARTY_ACCESS_ARRANGEMENT_AWS_GW_ID: `/SCCG/SCCG-ThirdPartyAccessArrangement/CDK/APIGateway/Id`,
+    SC_GET_RETRIEVE_PARTY_VIEW_API_KEY: `/SCCG/DeploymentConfig/RetrievePartyView/RetrievePartyView/ApiKey/${rpvStage}/Value`,
+    SC_GET_RETRIEVE_PARTY_VIEW_AWS_GW_ID: `/SCCG/DC-RetrievePartyView/CDR/APIGateway/Id`,
+    SC_GET_RETRIEVE_PARTY_IDENTIFICATION_API_KEY: `/SCCG/DeploymentConfig/PartyIdentity/SCCG-PartyIdentity/ApiKey/${rpiStage}/Value`,
+    SC_GET_RETRIEVE_PARTY_IDENTIFICATION_AWS_GW_HOST: `/SCCG/DeploymentConfig/PartyIdentity/SCCG-PartyIdentity/API&GWHost`,
+    
+    // ISDS API SSM Parameters
+    SC_GET_ISSUED_DEVICE_API_KEY: `/SCCG/DeploymentConfig/IssuedDevice/SCCG-IssuedDevice/ApiKey/${isdsStage}/Value`,
+    SC_GET_ISSUED_DEVICE_AWS_GW_ID: `/SCCG/SCCG-IssuedDevice/CDK/APIGateway/Id`,
+    
+    MTLS_CERT_SECRET_NAME: `/CHS/DeploymentConfig/pbb-opbk-lambda/${environment}/${stage}/${regionShortCode}/cdk/mtls/cert/secret/name`,
+    MTLS_KEY_SECRET_NAME: `/CHS/DeploymentConfig/pbb-opbk-lambda/${environment}/${stage}/${regionShortCode}/cdk/mtls/key/secret/name`,
+    MTLS_KEY_PWD_SECRET_NAME: `/CHS/DeploymentConfig/pbb-opbk-lambda/${environment}/${stage}/${regionShortCode}/cdk/mtls/key/pwd/secret/name`,
+    MTLS_WKP_SECRET_NAME: `/CHS/DeploymentConfig/pbb-opbk-lambda/${environment}/${stage}/${regionShortCode}/cdk/mtls/secret/wkp/name`,
+    MTLS_CERT_CROSS_ACC_ROLE_SECRET_NAME: `/CHS/DeploymentConfig/pbb-opbk-lambda/${environment}/${stage}/${regionShortCode}/cdk/mtls/secret/wkp/crossaccount-role`
+  },
+  X_FAPI_FINANCIAL_ID_BMO: "001",
+  CREDENTIAL_SERVICE_CHANNEL_URN: "urn:bmo:customer:channel:systems:retcan:banking:ocif",
+  API_ENDPOINTS: {
+    GET_PARTY_DETAILS_END_POINT: "/party-reference-data-directory/party-view/get",
+    GET_RETAIL_CONSENTS_END_POINT: "/customer-access-entitlement/third-party-access-arrangement/permissions/get",
+    DEL_RETAIL_CONSENT_END_POINT: "/customer-access-entitlement/third-party-access-arrangement/delete",
+    SC_RPI_GET_OCIF_ID_END_POINT: "/party-data-management/identification/get",
+    ISDS_CREDENTIAL_SERVICE_END_POINT: "/sys-isam/issued-device-administration/uids/get?ocifId=",
+    ISAM_CUSTOMER_GRANT_SERVICE_END_POINT: "/issued-device-administration/oath-token/grants",
+    // ISDS API Endpoint
+    ISDS_GET_DEVICE_DETAILS_END_POINT: "/api/issued-device-administration/alias/ecif/get"
+  }
 };
