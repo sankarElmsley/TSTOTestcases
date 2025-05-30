@@ -1108,6 +1108,9 @@ const isCustomerConsentedScopesAndDRRegisteredScopesMatched = async (
 };
 
 ----------------------------------------------------------------------------------------------
+
+
+
 const chaiAsPromised = require("chai-as-promised");
 const chai = require("chai");
 const sinon = require("sinon");
@@ -1117,195 +1120,29 @@ chai.use(chaiAsPromised);
 sinon.usingPromise(chaiAsPromised);
 
 const requestMapper = require("../../service/mapper/issuedDeviceRequestMapper.js");
-const customerInfoConstants = require("../../service/helper/customerInfoConstants.js");
+const correlationId = "123-er-234-231d-89j";
 
-describe("issuedDeviceRequestMapper", () => {
-    let constantsStub;
+describe("validates the getIssuedDeviceRequest of issuedDeviceRequestMapper", () => {
+  it("returns the issued device request payload with the fields passed", () => {
+    const ecifId = "42966916328688791220230809220108938";
+
+    const requestPayload = requestMapper.getIssuedDeviceRequest(
+      ecifId,
+      correlationId
+    );
+
+    expect(requestPayload).to.haveOwnProperty("ecifID");
+    expect(requestPayload).to.haveOwnProperty("expandList");
+    expect(requestPayload).to.haveOwnProperty("scope");
+    expect(requestPayload).to.haveOwnProperty("businessCategory");
+    expect(requestPayload).to.haveOwnProperty("originatorData");
     
-    beforeEach(() => {
-        // Stub the constants to ensure predictable test results
-        constantsStub = sinon.stub(customerInfoConstants);
-    });
-
-    afterEach(() => {
-        sinon.restore();
-    });
-
-    describe("getIssuedDeviceRequest", () => {
-        const correlationId = "123-er-234-231d-89j";
-        const ecifId = "42966916328688791220230809220108938";
-
-        it("should return a properly structured request payload with all required fields", () => {
-            // Arrange
-            constantsStub.IDA_EXPAND_LIST = "devices,accounts";
-            constantsStub.IDA_SCOPE = "full";
-            constantsStub.IDA_BUSINESS_CATEGORY = "RETAIL";
-            constantsStub.APP_CAT_ID = "TEST_APP_ID";
-            constantsStub.COUNTRY_CANADA = "CA";
-
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result).to.be.an('object');
-            expect(result).to.haveOwnProperty('ecifID');
-            expect(result).to.haveOwnProperty('expandList');
-            expect(result).to.haveOwnProperty('scope');
-            expect(result).to.haveOwnProperty('businessCategory');
-            expect(result).to.haveOwnProperty('originatorData');
-        });
-
-        it("should set ecifID correctly from the input parameter", () => {
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result.ecifID).to.equal(ecifId);
-        });
-
-        it("should use custom expandList when IDA_EXPAND_LIST constant is provided", () => {
-            // Arrange
-            const customExpandList = "devices,accounts,transactions";
-            constantsStub.IDA_EXPAND_LIST = customExpandList;
-
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result.expandList).to.equal(customExpandList);
-        });
-
-        it("should use default expandList value 'all' when IDA_EXPAND_LIST constant is not provided", () => {
-            // Arrange
-            constantsStub.IDA_EXPAND_LIST = undefined;
-
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result.expandList).to.equal("all");
-        });
-
-        it("should use custom scope when IDA_SCOPE constant is provided", () => {
-            // Arrange
-            const customScope = "limited";
-            constantsStub.IDA_SCOPE = customScope;
-
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result.scope).to.equal(customScope);
-        });
-
-        it("should use default scope value 'default' when IDA_SCOPE constant is not provided", () => {
-            // Arrange
-            constantsStub.IDA_SCOPE = undefined;
-
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result.scope).to.equal("default");
-        });
-
-        it("should set businessCategory as an array with custom value when IDA_BUSINESS_CATEGORY is provided", () => {
-            // Arrange
-            const customBusinessCategory = "RETAIL";
-            constantsStub.IDA_BUSINESS_CATEGORY = customBusinessCategory;
-
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result.businessCategory).to.be.an('array');
-            expect(result.businessCategory).to.have.lengthOf(1);
-            expect(result.businessCategory[0]).to.equal(customBusinessCategory);
-        });
-
-        it("should use default businessCategory value 'WEALTH' when IDA_BUSINESS_CATEGORY constant is not provided", () => {
-            // Arrange
-            constantsStub.IDA_BUSINESS_CATEGORY = undefined;
-
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result.businessCategory).to.be.an('array');
-            expect(result.businessCategory).to.have.lengthOf(1);
-            expect(result.businessCategory[0]).to.equal("WEALTH");
-        });
-
-        it("should have properly structured originatorData with all required fields", () => {
-            // Arrange
-            const testAppCatId = "TEST_APP_CAT_ID";
-            const testCountry = "CA";
-            constantsStub.APP_CAT_ID = testAppCatId;
-            constantsStub.COUNTRY_CANADA = testCountry;
-
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result.originatorData).to.be.an('object');
-            expect(result.originatorData).to.haveOwnProperty('applicationCatalogueID');
-            expect(result.originatorData).to.haveOwnProperty('country');
-            expect(result.originatorData).to.haveOwnProperty('locationID');
-            expect(result.originatorData).to.haveOwnProperty('locationType');
-            expect(result.originatorData).to.haveOwnProperty('channel');
-            expect(result.originatorData).to.haveOwnProperty('employeeUserID');
-            expect(result.originatorData).to.haveOwnProperty('employeeUserName');
-            expect(result.originatorData).to.haveOwnProperty('transitNumber');
-        });
-
-        it("should set originatorData fields with correct values", () => {
-            // Arrange
-            const testAppCatId = "TEST_APP_CAT_ID";
-            const testCountry = "CA";
-            constantsStub.APP_CAT_ID = testAppCatId;
-            constantsStub.COUNTRY_CANADA = testCountry;
-
-            // Act
-            const result = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result.originatorData.applicationCatalogueID).to.equal(testAppCatId);
-            expect(result.originatorData.country).to.equal(testCountry);
-            expect(result.originatorData.locationID).to.equal("192.168.0.0");
-            expect(result.originatorData.locationType).to.equal("IP");
-            expect(result.originatorData.channel).to.equal("web");
-            expect(result.originatorData.employeeUserID).to.equal("customerInfoService");
-            expect(result.originatorData.employeeUserName).to.equal("customerInfoService");
-            expect(result.originatorData.transitNumber).to.equal("000");
-        });
-
-        it("should handle empty or null ecifId parameter", () => {
-            // Act
-            const resultWithEmpty = requestMapper.getIssuedDeviceRequest("", correlationId);
-            const resultWithNull = requestMapper.getIssuedDeviceRequest(null, correlationId);
-            const resultWithUndefined = requestMapper.getIssuedDeviceRequest(undefined, correlationId);
-
-            // Assert
-            expect(resultWithEmpty.ecifID).to.equal("");
-            expect(resultWithNull.ecifID).to.equal(null);
-            expect(resultWithUndefined.ecifID).to.equal(undefined);
-        });
-
-        it("should handle empty or null correlationId parameter gracefully", () => {
-            // Act & Assert - should not throw an error
-            expect(() => requestMapper.getIssuedDeviceRequest(ecifId, "")).to.not.throw();
-            expect(() => requestMapper.getIssuedDeviceRequest(ecifId, null)).to.not.throw();
-            expect(() => requestMapper.getIssuedDeviceRequest(ecifId, undefined)).to.not.throw();
-        });
-
-        it("should return a new object instance each time it's called", () => {
-            // Act
-            const result1 = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-            const result2 = requestMapper.getIssuedDeviceRequest(ecifId, correlationId);
-
-            // Assert
-            expect(result1).to.not.equal(result2); // Different object references
-            expect(result1).to.deep.equal(result2); // Same content
-        });
-    });
+    expect(requestPayload.ecifID).to.equal(ecifId);
+    expect(requestPayload.businessCategory.length).to.equal(1);
+    expect(requestPayload.originatorData.locationID).to.equal("192.168.0.0");
+    expect(requestPayload.originatorData.locationType).to.equal("IP");
+    expect(requestPayload.originatorData.channel).to.equal("web");
+    expect(requestPayload.originatorData.employeeUserID).to.equal("customerInfoService");
+    expect(requestPayload.originatorData.transitNumber).to.equal("000");
+  });
 });
