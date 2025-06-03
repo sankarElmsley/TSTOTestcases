@@ -1146,3 +1146,13 @@ describe("validates the getIssuedDeviceRequest of issuedDeviceRequestMapper", ()
     expect(requestPayload.originatorData.transitNumber).to.equal("000");
   });
 });
+---------------------------------------------
+
+
+This is the initial step to register the entry in the samcodedef table, allowing the system to recognize the file as eligible for bulk booking. As part of the EDT quick wins, this logic has already been embedded in the code.
+
+When the system picks up the file, the records within it bypass grammar rule validation, and all entries are directly loaded into PF status within the EDT tables.
+
+Once the file processing is complete, the following query can be used to calculate and add the premium summation by grouping based on area and product.
+
+(You can now insert the actual query or any additional explanation as needed.)
