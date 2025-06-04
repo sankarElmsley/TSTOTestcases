@@ -1149,10 +1149,166 @@ describe("validates the getIssuedDeviceRequest of issuedDeviceRequestMapper", ()
 ---------------------------------------------
 
 
-This is the initial step to register the entry in the samcodedef table, allowing the system to recognize the file as eligible for bulk booking. As part of the EDT quick wins, this logic has already been embedded in the code.
+const logger = require("../../common/logger/logger.js");
+const ciConstants = require("../helper/customerInfoConstants.js");
+const customerInfoErrorCodes = require("../helper/customerInfoErrorCodes.js");
+const responseMapper = require("./issuedDeviceServiceResponseMapper.js");
+const axiosConfiguration = require("../helper/axiosRestClientConfiguration.js");
+const axios = require("axios");
 
-When the system picks up the file, the records within it bypass grammar rule validation, and all entries are directly loaded into PF status within the EDT tables.
+const BACKEND = "issuedDeviceService";
+const LOG_PREFIX = "issuedDeviceService.js -";
+const API_BASE_URL = process.env.ISSUED_DEVICE_ADMINISTRATION_BASE_URI || "https://api2-dev.bmogc.net";
+const API_END_POINT = "/api/issued-device-administration/alias/ecif/get";
+const APP_CAT_ID = process.env.APP_CAT_ID;
+const API_TIMEOUT = process.env.BACKEND_API_TIMEOUT;
+const ENTERPRISE_APIC_HOST = process.env.APIC_URL_MTIS_HOST;
 
-Once the file processing is complete, the following query can be used to calculate and add the premium summation by grouping based on area and product.
+const getIssuedDeviceDetails = async (args, requestParams, correlationId, requestId) => {
+  logger.trace(
+    LOG_PREFIX.concat("In getIssuedDeviceDetails begins.....", " with requestid: ", requestId),
+    correlationId
+  );
 
-(You can now insert the actual query or any additional explanation as needed.)
+  return new Promise(async function (resolve, reject) {
+    const startTime = Date.now();
+    const apiURL = API_BASE_URL + API_END_POINT;
+
+    // Build request payload
+    const payload = {
+      ecifID: requestParams.ecifId,
+      expandList: requestParams.expandList || "all",
+      scope: requestParams.scope || "default",
+      businessCategory: requestParams.businessCategory || ["WEALTH"],
+      originatorData: {
+        applicationCatalogueID: APP_CAT_ID,
+        country: requestParams.country || "ca",
+        locationID: requestParams.locationID || "192.168.0.0",
+        locationType: requestParams.locationType || "IP",
+        channel: requestParams.channel || "web",
+        employeeUserID: requestParams.employeeUserID || "employeeUserId123",
+        employeeUserName: requestParams.employeeUserName || "myhost",
+        transitNumber: requestParams.transitNumber || "tn123"
+      }
+    };
+
+    logger.logBackendServiceRequest(
+      LOG_PREFIX.concat(`${BACKEND} REST API`),
+      apiURL,
+      payload,
+      { host: ENTERPRISE_APIC_HOST },
+      correlationId
+    );
+
+    const headers = {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ENTERPRISE_APIC_SECRET_NAME,
+      "host": ENTERPRISE_APIC_HOST,
+      "x-request-id": requestId,
+      "x-fapi-interaction-id": correlationId,
+      "x-bmo-request-id": requestId,
+      "x-bmo-correlation-id": correlationId,
+      "x-bo-channel-urn": requestParams.channelUrn || "",
+      "x-fapi-financial-id": ciConstants.X_FAPI_FINANCIAL_ID_BMO || "BMO",
+      "x-app-cat-id": APP_CAT_ID
+    };
+
+    logger.debug(
+      LOG_PREFIX.concat(
+        "apiUrl: ",
+        apiURL,
+        ", headers: ",
+        JSON.stringify(headers),
+        ", payload: ",
+        JSON.stringify(payload),
+        ", API_TIMEOUT: ",
+        API_TIMEOUT
+      ),
+      correlationId
+    );
+
+    try {
+      const httpsAgent = await axiosConfiguration.configureMTLSHttpsAgent(args.ssm, args.sm, correlationId);
+      axios.defaults.httpsAgent = httpsAgent;
+
+      const response = await axios.post(apiURL, payload, {
+        timeout: API_TIMEOUT,
+        headers: headers
+      });
+
+      logger.info(
+        LOG_PREFIX.concat("response status: ", response.status),
+        correlationId
+      );
+
+      logger.logBackendServiceResponse(
+        LOG_PREFIX.concat(`${BACKEND} REST API`),
+        startTime,
+        response.data,
+        correlationId
+      );
+
+      if (response.status === 200 && response.data) {
+        return resolve(response.data);
+      } else {
+        logger.error(
+          LOG_PREFIX.concat(
+            BACKEND,
+            " backend responded with status ",
+            response.status,
+            " and ",
+            response.data ? "some" : "no",
+            " data"
+          ),
+          null,
+          correlationId
+        );
+      }
+    } catch (error) {
+      logger.error(
+        LOG_PREFIX.concat("errors in calling backend ", BACKEND),
+        error,
+        correlationId
+      );
+
+      if (error.response) {
+        logger.logBackendServiceError(
+          LOG_PREFIX.concat(`${BACKEND} REST API`),
+          startTime,
+          error.response.data,
+          BACKEND,
+          correlationId
+        );
+      } else {
+        logger.logBackendServiceError(
+          LOG_PREFIX.concat(`${BACKEND} REST API`),
+          startTime,
+          error,
+          BACKEND,
+          correlationId
+        );
+      }
+
+      logger.error(
+        LOG_PREFIX.concat(
+          customerInfoErrorCodes.UNEXPECTED_ERROR_IDS_API.code,
+          " ",
+          customerInfoErrorCodes.UNEXPECTED_ERROR_IDS_API.message
+        ),
+        error,
+        correlationId
+      );
+
+      const errorResponse = responseMapper.mapErrorResponse(
+        parseInt(customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR.statusCode),
+        customerInfoErrorCodes.VENDOR_ERROR.INTERNAL_SERVER_ERROR,
+        correlationId
+      );
+
+      return reject(errorResponse);
+    }
+  });
+};
+
+module.exports = getIssuedDeviceDetails;
